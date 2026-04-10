@@ -44,6 +44,8 @@ app.get( "/get", function ( req, res ) {
 
  
 app.post( "/post", upload.single('imagename'), function ( req, res ) {
+    const allowedPricingModes = ['inclusive', 'exclusive'];
+    const vatPricingMode = allowedPricingModes.includes(req.body.vat_pricing_mode) ? req.body.vat_pricing_mode : 'inclusive';
 
     let image = '';
 
@@ -81,6 +83,7 @@ app.post( "/post", upload.single('imagename'), function ( req, res ) {
             "symbol": req.body.symbol,
             "percentage": req.body.percentage,
             "charge_tax": req.body.charge_tax,
+            "vat_pricing_mode": vatPricingMode,
             "footer": req.body.footer,
             "img": image
         }       

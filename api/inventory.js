@@ -92,10 +92,15 @@ app.post( "/product", upload.single('imagename'), function ( req, res ) {
     let productId = isCreate ? Math.floor(Date.now() / 1000) : parseInt(req.body.id);
     let requestedSku = (req.body.sku || '').trim();
 
+    let allowedTaxTypes = ['vatable', 'exempt', 'zero_rated'];
+    let requestedTaxType = (req.body.tax_type || 'vatable').trim();
+    let taxType = allowedTaxTypes.includes(requestedTaxType) ? requestedTaxType : 'vatable';
+
     let Product = {
         _id: productId,
         sku: requestedSku,
         price: req.body.price,
+        tax_type: taxType,
         category: req.body.category,
         quantity: req.body.quantity == "" ? 0 : req.body.quantity,
         name: req.body.name,

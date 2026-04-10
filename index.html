@@ -262,7 +262,7 @@
                      <div class="row">
                          <div class="col-md-3">Discount</div>
                          <div class="col-md-3"><input class="form-control" type="number" id="inputDiscount" oninput="$(this).calculateCart();"></div>
-                         <div class="col-md-3">Gross Price (inc <span id="taxInfo"></span>% Tax)</div>
+                         <div class="col-md-3"><span id="grossPriceLabel">Gross Price</span><span id="taxInfo" style="display:none;"></span></div>
                          <div class="col-md-3"><h3 id="gross_price">0.00</h3></div>
                      </div>
   
@@ -554,6 +554,14 @@
                             <input type="text" required="required" name="price" placeholder="Price" class="form-control" id="product_price">
                         </div>
                         <div class="form-group">
+                            <label for="product_tax_type">Tax Type</label>
+                            <select name="tax_type" class="form-control" id="product_tax_type">
+                                <option value="vatable" selected>VATable (12%)</option>
+                                <option value="exempt">VAT-Exempt</option>
+                                <option value="zero_rated">Zero-Rated (0%)</option>
+                            </select>
+                        </div>
+                        <div class="form-group">
                             <label for="userName">Stock</label>
                             <input type="text" name="quantity" placeholder="Available stock" class="form-control" id="quantity">
                         </div>
@@ -618,6 +626,7 @@
                                     <th>Item</th>
                                     <th>Name</th>                                      
                                     <th>Price</th>
+                                    <th>Tax Type</th>
                                     <th>Stock</th>
                                     <th>Category</th>
                                     <th>Action</th>
@@ -890,6 +899,13 @@
                                             <input type="text" required="required"  name="percentage" class="form-control" id="percentage">
                                             </div>
                                             <div class="pull-right p-t-10"> % </div>
+                                     </div>
+                                     <div class="form-group">
+                                        <label for="vat_pricing_mode">VAT Pricing Mode</label>
+                                        <select name="vat_pricing_mode" id="vat_pricing_mode" class="form-control">
+                                            <option value="inclusive" selected>VAT Inclusive (Price already includes VAT)</option>
+                                            <option value="exclusive">VAT Exclusive (Add VAT on top)</option>
+                                        </select>
                                      </div>
                                      <br><br>
                                      <div class="form-group">

@@ -43,6 +43,7 @@ let customerOrderList = [];
 let ownUserEdit = null;
 let totalPrice = 0;
 let orderTotal = 0;
+let vatBreakdown = { taxable: 0, exempt: 0, zeroRated: 0, vatAmount: 0, grossTotal: 0 };
 let auth_error = 'Incorrect username or password';
 let auth_empty = 'Please enter a username and password';
 let holdOrderlocation = $("#randerHoldOrders");
@@ -67,6 +68,79 @@ let end_date = moment(end).toDate();
 let by_till = 0;
 let by_user = 0;
 let by_status = 1;
+
+function isVatChargeEnabled() {
+    if (!settings) return false;
+    return settings.charge_tax === true || settings.charge_tax === 'on' || settings.charge_tax === 1 || settings.charge_tax === '1';
+}
+
+function getVatPricingMode() {
+    if (!settings || !settings.vat_pricing_mode) return 'inclusive';
+    return settings.vat_pricing_mode === 'exclusive' ? 'exclusive' : 'inclusive';
+}
+
+function getProductTaxType(product) {
+    if (!product || !product.tax_type) return 'vatable';
+    if (product.tax_type === 'exempt' || product.tax_type === 'zero_rated') return product.tax_type;
+    return 'vatable';
+}
+
+function refreshTaxInfoLabel() {
+    const rate = isNaN(vat) ? 0 : vat;
+    const modeLabel = getVatPricingMode() === 'inclusive' ? 'inc' : 'exc';
+    if (isVatChargeEnabled()) {
+        $("#taxInfo").text(rate);
+        $("#grossPriceLabel").text(`Gross Price (${modeLabel} ${rate}% VAT)`);
+    } else {
+        $("#taxInfo").text(0);
+        $("#grossPriceLabel").text('Gross Price');
+    }
+}
+
+function formatTaxTypeLabel(taxType) {
+    if (taxType === 'exempt') return 'VAT-Exempt';
+    if (taxType === 'zero_rated') return 'Zero-Rated';
+    return 'VATable';
+}
+
+function buildTaxRowsForReceipt(breakdown, taxValue, pricingMode) {
+    const mode = pricingMode || getVatPricingMode();
+    const vatLabel = mode === 'exclusive' ? 'VAT (' + settings.percentage + '%, on top)' : 'VAT (' + settings.percentage + '%, inclusive)';
+    let rows = `
+            <tr>
+                <td colspan="3">VATable Sales</td>
+                <td style="text-align:right;">${settings.symbol}${parseFloat(breakdown.taxable || 0).toFixed(2)}</td>
+            </tr>
+            <tr>
+                <td colspan="3">VAT-Exempt Sales</td>
+                <td style="text-align:right;">${settings.symbol}${parseFloat(breakdown.exempt || 0).toFixed(2)}</td>
+            </tr>
+            <tr>
+                <td colspan="3">Zero-Rated Sales</td>
+                <td style="text-align:right;">${settings.symbol}${parseFloat(breakdown.zeroRated || 0).toFixed(2)}</td>
+            </tr>`;
+
+    if (parseFloat(taxValue || 0) > 0 || isVatChargeEnabled()) {
+        rows += `
+            <tr>
+                <td colspan="3">${vatLabel}</td>
+                <td style="text-align:right;">${settings.symbol}${parseFloat(taxValue || 0).toFixed(2)}</td>
+            </tr>`;
+    }
+
+    return rows;
+}
+
+function buildVatClassificationRows(breakdown) {
+    let rows = '';
+    if (parseFloat(breakdown.exempt || 0) > 0) {
+        rows += `<tr><td colspan="4"><b>VAT-Exempt Sale</b></td></tr>`;
+    }
+    if (parseFloat(breakdown.zeroRated || 0) > 0) {
+        rows += `<tr><td colspan="4"><b>Zero-Rated Sale</b></td></tr>`;
+    }
+    return rows;
+}
 
 $(function () {
 
@@ -151,6 +225,11 @@ if (auth == undefined) {
 
     $.get(api + 'settings/get', function (data) {
         settings = data.settings;
+        if (settings) {
+            settings.vat_pricing_mode = settings.vat_pricing_mode || 'inclusive';
+            vat = parseFloat(settings.percentage) || 0;
+            refreshTaxInfoLabel();
+        }
     });
 
 
@@ -179,8 +258,9 @@ if (auth == undefined) {
                 $('#settingsModal').modal('show');
             }
             else {
-                vat = parseFloat(settings.percentage);
-                $("#taxInfo").text(settings.charge_tax ? vat : 0);
+                vat = parseFloat(settings.percentage) || 0;
+                settings.vat_pricing_mode = settings.vat_pricing_mode || 'inclusive';
+                refreshTaxInfoLabel();
             }
 
         }, 1500);
@@ -210,6 +290,7 @@ if (auth == undefined) {
 
                 data.forEach(item => {
                     item.price = parseFloat(item.price).toFixed(2);
+                    item.tax_type = getProductTaxType(item);
                 });
 
                 allProducts = [...data];
@@ -406,6 +487,7 @@ if (auth == undefined) {
                 product_name: data.name,
                 sku: data.sku || data._id,
                 price: data.price,
+                tax_type: getProductTaxType(data),
                 quantity: 1
             };
 
@@ -436,34 +518,97 @@ if (auth == undefined) {
 
 
         $.fn.calculateCart = function () {
-            let total = 0;
-            let grossTotal;
+            let baseTotal = 0;
+            let grossTotal = 0;
+            let taxableSales = 0;
+            let exemptSales = 0;
+            let zeroRatedSales = 0;
+            let discount = parseFloat($("#inputDiscount").val() || 0);
+            let discountAllocated = 0;
+            let vatEnabled = isVatChargeEnabled();
+            let vatMode = getVatPricingMode();
+            totalVat = 0;
+
             $('#total').text(cart.length);
+
             $.each(cart, function (index, data) {
-                total += data.quantity * data.price;
+                baseTotal += data.quantity * parseFloat(data.price);
             });
-            total = total - $("#inputDiscount").val();
-            $('#price').text(settings.symbol + total.toFixed(2));
 
-            subTotal = total;
-
-            if ($("#inputDiscount").val() >= total) {
+            if (isNaN(discount) || discount < 0) {
+                discount = 0;
                 $("#inputDiscount").val(0);
             }
 
-            if (settings.charge_tax) {
-                totalVat = ((total * vat) / 100);
-                grossTotal = total + totalVat
+            if (discount >= baseTotal && baseTotal > 0) {
+                discount = 0;
+                $("#inputDiscount").val(0);
             }
 
-            else {
-                grossTotal = total;
+            $.each(cart, function (index, data) {
+                let lineAmount = data.quantity * parseFloat(data.price);
+                let lineDiscount = 0;
+
+                if (discount > 0 && baseTotal > 0) {
+                    if (index === cart.length - 1) {
+                        lineDiscount = discount - discountAllocated;
+                    } else {
+                        lineDiscount = discount * (lineAmount / baseTotal);
+                        discountAllocated += lineDiscount;
+                    }
+                }
+
+                let netLine = lineAmount - lineDiscount;
+                if (netLine < 0) netLine = 0;
+
+                let taxType = getProductTaxType(data);
+
+                if (taxType === 'vatable') {
+                    if (vatEnabled) {
+                        if (vatMode === 'exclusive') {
+                            let lineVat = (netLine * vat) / 100;
+                            taxableSales += netLine;
+                            totalVat += lineVat;
+                            grossTotal += (netLine + lineVat);
+                        } else {
+                            let lineVat = (netLine * vat) / (100 + vat);
+                            taxableSales += (netLine - lineVat);
+                            totalVat += lineVat;
+                            grossTotal += netLine;
+                        }
+                    } else {
+                        taxableSales += netLine;
+                        grossTotal += netLine;
+                    }
+                } else if (taxType === 'exempt') {
+                    exemptSales += netLine;
+                    grossTotal += netLine;
+                } else {
+                    zeroRatedSales += netLine;
+                    grossTotal += netLine;
+                }
+            });
+
+            subTotal = baseTotal - discount;
+            if (subTotal < 0) subTotal = 0;
+            if (!vatEnabled) {
+                totalVat = 0;
             }
+
+            vatBreakdown = {
+                taxable: parseFloat(taxableSales.toFixed(2)),
+                exempt: parseFloat(exemptSales.toFixed(2)),
+                zeroRated: parseFloat(zeroRatedSales.toFixed(2)),
+                vatAmount: parseFloat(totalVat.toFixed(2)),
+                grossTotal: parseFloat(grossTotal.toFixed(2))
+            };
+
+            $('#price').text(settings.symbol + subTotal.toFixed(2));
 
             orderTotal = grossTotal.toFixed(2);
 
             $("#gross_price").text(settings.symbol + grossTotal.toFixed(2));
-            $("#payablePrice").val(grossTotal);
+            $("#payablePrice").val(grossTotal.toFixed(2));
         };
 
 
@@ -642,55 +787,45 @@ if (auth == undefined) {
 
             let items = "";
             let payment = 0;
+            let customer = JSON.parse($("#customer").val());
+            let customerName = customer == 0 ? 'Walk in customer' : customer.name;
+            let customerTin = customer && customer.tin ? customer.tin : '';
+            let customerAddress = customer && customer.address ? customer.address : '';
 
             cart.forEach(item => {
-
-                items += "<tr><td>" + item.product_name + "</td><td>" + item.quantity + "</td><td>" + settings.symbol + parseFloat(item.price).toFixed(2) + "</td></tr>";
+                let unitPrice = parseFloat(item.price);
+                let lineAmount = unitPrice * parseFloat(item.quantity);
+                items += "<tr><td>" + item.product_name + " <small>(" + formatTaxTypeLabel(getProductTaxType(item)) + ")</small></td><td style=\"text-align:center;\">" + item.quantity + "</td><td style=\"text-align:right;\">" + settings.symbol + unitPrice.toFixed(2) + "</td><td style=\"text-align:right;\">" + settings.symbol + lineAmount.toFixed(2) + "</td></tr>";
 
             });
 
             let currentTime = new Date(moment());
 
             let discount = $("#inputDiscount").val();
-            let customer = JSON.parse($("#customer").val());
             let date = moment(currentTime).format("YYYY-MM-DD HH:mm:ss");
             let paid = $("#payment").val() == "" ? "" : parseFloat($("#payment").val()).toFixed(2);
             let change = $("#change").text() == "" ? "" : parseFloat($("#change").text()).toFixed(2);
             let refNumber = $("#refNumber").val();
             let orderNumber = holdOrder;
             let type = "Cash";
-            let tax_row = "";
+            let tax_rows = buildTaxRowsForReceipt(vatBreakdown, totalVat, getVatPricingMode());
+            let classification_rows = buildVatClassificationRows(vatBreakdown);
 
 
             if (paid != "") {
                 payment = `<tr>
-                        <td>Paid</td>
-                        <td>:</td>
-                        <td>${settings.symbol + paid}</td>
+                        <td colspan="3">Amount Tendered</td>
+                        <td style="text-align:right;">${settings.symbol + paid}</td>
                     </tr>
                     <tr>
-                        <td>Change</td>
-                        <td>:</td>
-                        <td>${settings.symbol + Math.abs(change).toFixed(2)}</td>
+                        <td colspan="3">Change</td>
+                        <td style="text-align:right;">${settings.symbol + Math.abs(change).toFixed(2)}</td>
                     </tr>
                     <tr>
-                        <td>Method</td>
-                        <td>:</td>
-                        <td>${type}</td>
+                        <td colspan="3">Payment Method</td>
+                        <td style="text-align:right;">${type}</td>
                     </tr>`
             }
-
-
-
-            if (settings.charge_tax) {
-                tax_row = `<tr>
-                    <td>Vat(${settings.percentage})% </td>
-                    <td>:</td>
-                    <td>${settings.symbol}${parseFloat(totalVat).toFixed(2)}</td>
-                </tr>`;
-            }
-
-
 
             if (status == 0) {
 
@@ -724,19 +859,22 @@ if (auth == undefined) {
         <p style="text-align: center;">
         ${settings.img == "" ? settings.img : '<img style="max-width: 50px;max-width: 100px;" src ="' + img_path + settings.img + '" /><br>'}
             <span style="font-size: 22px;">${settings.store}</span> <br>
+            <span style="font-size:16px; font-weight:bold;">INVOICE</span><br>
             ${settings.address_one} <br>
             ${settings.address_two} <br>
             ${settings.contact != '' ? 'Tel: ' + settings.contact + '<br>' : ''} 
-            ${settings.tax != '' ? 'Vat No: ' + settings.tax + '<br>' : ''} 
+            ${settings.tax != '' ? 'VAT REG TIN: ' + settings.tax + '<br>' : 'VAT REG TIN: ____________________<br>'}
         </p>
         <hr>
         <left>
             <p>
-            Order No : ${orderNumber} <br>
-            Ref No : ${refNumber == "" ? orderNumber : refNumber} <br>
-            Customer : ${customer == 0 ? 'Walk in customer' : customer.name} <br>
-            Cashier : ${user.fullname} <br>
+            Invoice No : ${orderNumber} <br>
             Date : ${date}<br>
+            Ref No : ${refNumber == "" ? orderNumber : refNumber} <br>
+            Sold To : ${customerName} <br>
+            Buyer TIN : ${customerTin}<br>
+            Buyer Address : ${customerAddress}<br>
+            Cashier : ${user.fullname} <br>
             </p>
 
         </left>
@@ -746,31 +884,28 @@ if (auth == undefined) {
             <tr>
                 <th>Item</th>
                 <th>Qty</th>
-                <th>Price</th>
+                <th style="text-align:right;">Unit Price</th>
+                <th style="text-align:right;">Amount</th>
             </tr>
             </thead>
             <tbody>
             ${items}                
      
             <tr>                        
-                <td><b>Subtotal</b></td>
-                <td>:</td>
-                <td><b>${settings.symbol}${subTotal.toFixed(2)}</b></td>
+                <td colspan="3"><b>${getVatPricingMode() === 'inclusive' ? 'Total Sales (VAT Inclusive)' : 'Total Sales (VAT Exclusive)'}</b></td>
+                <td style="text-align:right;"><b>${settings.symbol}${subTotal.toFixed(2)}</b></td>
             </tr>
             <tr>
-                <td>Discount</td>
-                <td>:</td>
-                <td>${discount > 0 ? settings.symbol + parseFloat(discount).toFixed(2) : ''}</td>
+                <td colspan="3">Less: Discount</td>
+                <td style="text-align:right;">${discount > 0 ? settings.symbol + parseFloat(discount).toFixed(2) : settings.symbol + '0.00'}</td>
             </tr>
             
-            ${tax_row}
+            ${tax_rows}
+            ${classification_rows}
         
             <tr>
-                <td><h3>Total</h3></td>
-                <td><h3>:</h3></td>
-                <td>
-                    <h3>${settings.symbol}${parseFloat(orderTotal).toFixed(2)}</h3>
-                </td>
+                <td colspan="3"><h5>Total Amount Due (VAT Inclusive)</h5></td>
+                <td style="text-align:right;"><h5>${settings.symbol}${parseFloat(orderTotal).toFixed(2)}</h5></td>
             </tr>
             ${payment == 0 ? '' : payment}
             </tbody>
@@ -809,6 +944,10 @@ if (auth == undefined) {
                 status: status,
                 subtotal: parseFloat(subTotal).toFixed(2),
                 tax: totalVat,
+                taxable_sales: vatBreakdown.taxable,
+                exempt_sales: vatBreakdown.exempt,
+                zero_rated_sales: vatBreakdown.zeroRated,
+                vat_pricing_mode: getVatPricingMode(),
                 order_type: 1,
                 items: cart,
                 date: currentTime,
@@ -979,6 +1118,7 @@ if (auth == undefined) {
                         product_name: product.product_name,
                         sku: product.sku,
                         price: product.price,
+                        tax_type: getProductTaxType(product),
                         quantity: product.quantity
                     };
                     cart.push(item);
@@ -1002,6 +1142,7 @@ if (auth == undefined) {
                         product_name: product.product_name,
                         sku: product.sku,
                         price: product.price,
+                        tax_type: getProductTaxType(product),
                         quantity: product.quantity
                     };
                     cart.push(item);
@@ -1172,6 +1313,7 @@ if (auth == undefined) {
             $('#saveProduct').get(0).reset();
             $('#current_img').text('');
             $('#product_id').val('');
+            $('#product_tax_type').val('vatable');
         });
 
 
@@ -1282,6 +1424,7 @@ if (auth == undefined) {
             $('#product_sku').val(allProducts[index].sku || allProducts[index]._id);
             $('#product_price').val(allProducts[index].price);
             $('#quantity').val(allProducts[index].quantity);
+            $('#product_tax_type').val(getProductTaxType(allProducts[index]));
 
             $('#product_id').val(allProducts[index]._id);
             $('#img').val(allProducts[index].img);
@@ -1551,6 +1694,7 @@ if (auth == undefined) {
             <td><img style="max-height: 50px; max-width: 50px; border: 1px solid #ddd;" src="${product.img == "" ? "./assets/images/default.jpg" : img_path + product.img}" id="product_img"></td>
             <td>${product.name}</td>
             <td>${settings.symbol}${product.price}</td>
+            <td>${formatTaxTypeLabel(getProductTaxType(product))}</td>
             <td>${product.stock == 1 ? product.quantity : 'N/A'}</td>
             <td>${category.length > 0 ? category[0].name : ''}</td>
             <td class="nobr"><span class="btn-group"><button onClick="$(this).editProduct(${index})" class="btn btn-warning btn-sm"><i class="fa fa-edit"></i></button><button onClick="$(this).deleteProduct(${product._id})" class="btn btn-danger btn-sm"><i class="fa fa-trash"></i></button></span></td></tr>`;
@@ -1669,6 +1813,7 @@ if (auth == undefined) {
             formData['app'] = $('#app').find('option:selected').text();
             formData['mac'] = mac_address;
             formData['till'] = 1;
+            formData['vat_pricing_mode'] = formData.vat_pricing_mode || 'inclusive';
 
             $('#settings_form').append('<input type="hidden" name="app" value="' + formData.app + '" />');
 
@@ -1880,9 +2025,11 @@ if (auth == undefined) {
                 $("#tax").val(settings.tax);
                 $("#symbol").val(settings.symbol);
                 $("#percentage").val(settings.percentage);
+                $("#vat_pricing_mode").val(settings.vat_pricing_mode || 'inclusive');
                 $("#footer").val(settings.footer);
                 $("#logo_img").val(settings.img);
-                if (settings.charge_tax == 'on') {
+                $('#charge_tax').prop("checked", false);
+                if (settings.charge_tax == 'on' || settings.charge_tax === true || settings.charge_tax === 1 || settings.charge_tax === '1') {
                     $('#charge_tax').prop("checked", true);
                 }
                 if (settings.img != "") {
@@ -2178,16 +2325,27 @@ $.fn.viewTransaction = function (index) {
     transaction_index = index;
 
     let discount = allTransactions[index].discount;
-    let customer = allTransactions[index].customer == 0 ? 'Walk in Customer' : allTransactions[index].customer.username;
     let refNumber = allTransactions[index].ref_number != "" ? allTransactions[index].ref_number : allTransactions[index].order;
     let orderNumber = allTransactions[index].order;
     let type = "";
-    let tax_row = "";
+    let payment = 0;
+    let tax_rows = "";
     let items = "";
     let products = allTransactions[index].items;
+    let customerName = allTransactions[index].customer == 0 ? 'Walk in customer' : allTransactions[index].customer.name;
+    let customerTin = allTransactions[index].customer && allTransactions[index].customer.tin ? allTransactions[index].customer.tin : '';
+    let customerAddress = allTransactions[index].customer && allTransactions[index].customer.address ? allTransactions[index].customer.address : '';
+    let breakdown = {
+        taxable: parseFloat(allTransactions[index].taxable_sales || 0),
+        exempt: parseFloat(allTransactions[index].exempt_sales || 0),
+        zeroRated: parseFloat(allTransactions[index].zero_rated_sales || 0)
+    };
+    let classification_rows = buildVatClassificationRows(breakdown);
 
     products.forEach(item => {
-        items += "<tr><td>" + item.product_name + "</td><td>" + item.quantity + "</td><td>" + settings.symbol + parseFloat(item.price).toFixed(2) + "</td></tr>";
+        let unitPrice = parseFloat(item.price);
+        let lineAmount = unitPrice * parseFloat(item.quantity);
+        items += "<tr><td>" + item.product_name + " <small>(" + formatTaxTypeLabel(getProductTaxType(item)) + ")</small></td><td style=\"text-align:center;\">" + item.quantity + "</td><td style=\"text-align:right;\">" + settings.symbol + unitPrice.toFixed(2) + "</td><td style=\"text-align:right;\">" + settings.symbol + lineAmount.toFixed(2) + "</td></tr>";
 
     });
 
@@ -2197,31 +2355,20 @@ $.fn.viewTransaction = function (index) {
 
     if (allTransactions[index].paid != "") {
         payment = `<tr>
-                    <td>Paid</td>
-                    <td>:</td>
-                    <td>${settings.symbol + allTransactions[index].paid}</td>
+                    <td colspan="3">Amount Tendered</td>
+                    <td style="text-align:right;">${settings.symbol + allTransactions[index].paid}</td>
                 </tr>
                 <tr>
-                    <td>Change</td>
-                    <td>:</td>
-                    <td>${settings.symbol + Math.abs(allTransactions[index].change).toFixed(2)}</td>
+                    <td colspan="3">Change</td>
+                    <td style="text-align:right;">${settings.symbol + Math.abs(allTransactions[index].change).toFixed(2)}</td>
                 </tr>
                 <tr>
-                    <td>Method</td>
-                    <td>:</td>
-                    <td>${type}</td>
+                    <td colspan="3">Payment Method</td>
+                    <td style="text-align:right;">${type}</td>
                 </tr>`
     }
 
-
-
-    if (settings.charge_tax) {
-        tax_row = `<tr>
-                <td>Vat(${settings.percentage})% </td>
-                <td>:</td>
-                <td>${settings.symbol}${parseFloat(allTransactions[index].tax).toFixed(2)}</td>
-            </tr>`;
-    }
+    tax_rows = buildTaxRowsForReceipt(breakdown, allTransactions[index].tax, allTransactions[index].vat_pricing_mode || getVatPricingMode());
 
 
 
@@ -2229,19 +2376,22 @@ $.fn.viewTransaction = function (index) {
         <p style="text-align: center;">
         ${settings.img == "" ? settings.img : '<img style="max-width: 50px;max-width: 100px;" src ="' + img_path + settings.img + '" /><br>'}
             <span style="font-size: 22px;">${settings.store}</span> <br>
+            <span style="font-size:16px; font-weight:bold;">INVOICE</span><br>
             ${settings.address_one} <br>
             ${settings.address_two} <br>
             ${settings.contact != '' ? 'Tel: ' + settings.contact + '<br>' : ''} 
-            ${settings.tax != '' ? 'Vat No: ' + settings.tax + '<br>' : ''} 
+            ${settings.tax != '' ? 'VAT REG TIN: ' + settings.tax + '<br>' : 'VAT REG TIN: ____________________<br>'}
     </p>
     <hr>
     <left>
         <p>
-        Invoice : ${orderNumber} <br>
-        Ref No : ${refNumber} <br>
-        Customer : ${allTransactions[index].customer == 0 ? 'Walk in Customer' : allTransactions[index].customer.name} <br>
-        Cashier : ${allTransactions[index].user} <br>
+        Invoice No : ${orderNumber} <br>
         Date : ${moment(allTransactions[index].date).format('DD MMM YYYY HH:mm:ss')}<br>
+        Ref No : ${refNumber} <br>
+        Sold To : ${customerName} <br>
+        Buyer TIN : ${customerTin}<br>
+        Buyer Address : ${customerAddress}<br>
+        Cashier : ${allTransactions[index].user} <br>
         </p>
 
     </left>
@@ -2251,31 +2401,28 @@ $.fn.viewTransaction = function (index) {
         <tr>
             <th>Item</th>
             <th>Qty</th>
-            <th>Price</th>
+            <th style="text-align:right;">Unit Price</th>
+            <th style="text-align:right;">Amount</th>
         </tr>
         </thead>
         <tbody>
         ${items}                
  
         <tr>                        
-            <td><b>Subtotal</b></td>
-            <td>:</td>
-            <td><b>${settings.symbol}${allTransactions[index].subtotal}</b></td>
+            <td colspan="3"><b>${(allTransactions[index].vat_pricing_mode || getVatPricingMode()) === 'inclusive' ? 'Total Sales (VAT Inclusive)' : 'Total Sales (VAT Exclusive)'}</b></td>
+            <td style="text-align:right;"><b>${settings.symbol}${parseFloat(allTransactions[index].subtotal).toFixed(2)}</b></td>
         </tr>
         <tr>
-            <td>Discount</td>
-            <td>:</td>
-            <td>${discount > 0 ? settings.symbol + parseFloat(allTransactions[index].discount).toFixed(2) : ''}</td>
+            <td colspan="3">Less: Discount</td>
+            <td style="text-align:right;">${discount > 0 ? settings.symbol + parseFloat(allTransactions[index].discount).toFixed(2) : settings.symbol + '0.00'}</td>
         </tr>
         
-        ${tax_row}
+        ${tax_rows}
+        ${classification_rows}
     
         <tr>
-            <td><h3>Total</h3></td>
-            <td><h3>:</h3></td>
-            <td>
-                <h3>${settings.symbol}${allTransactions[index].total}</h3>
-            </td>
+            <td colspan="3"><h4>Total Amount Due (VAT Inclusive)</h4></td>
+            <td style="text-align:right;"><h4>${settings.symbol}${parseFloat(allTransactions[index].total).toFixed(2)}</h4></td>
         </tr>
         ${payment == 0 ? '' : payment}
         </tbody>
