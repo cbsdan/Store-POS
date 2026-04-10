@@ -7,10 +7,62 @@
 #card-box th, #card-box td:first-child{ width: 10px; }
 #card-box th, #card-box td:nth-child(2){ width: 150px; }
 
+#cartTable {
+    width: 100%;
+    table-layout: fixed;
+}
+
+#cartTable thead {
+  display: block;
+  width: 100%;
+}
 #cartTable tbody { 
   display: block; 
   height: calc(100vh - 425px);
   overflow: auto;
+  width: 100%;
+}
+
+#cartTable thead tr,
+#cartTable tbody tr {
+  display: table;
+  width: 100%;
+  table-layout: fixed;
+}
+
+#cartTable th.number,
+#cartTable td.number {
+    width: 5%;
+}
+
+#cartTable th.item,
+#cartTable td.item {
+    width: 35%;
+}
+
+#cartTable th.qty,
+#cartTable td.qty {
+    width: 30%;
+}
+
+#cartTable th.price,
+#cartTable td.price {
+    width: 20%;
+}
+
+#cartTable th.action,
+#cartTable td.action {
+    width: 10%;
+}
+
+#cartTable td.qty .input-group {
+    width: 100%;
+}
+
+#cartTable td {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
 }
 
 #parent { 
@@ -89,6 +141,100 @@ margin-right: 30px;
 .print-btn{
   padding: 10px;
   border-radius: 2px;
+}
+
+.hold-order-card {
+    border: 1px solid #e5e5e5;
+    border-radius: 10px;
+    padding: 14px;
+    margin-bottom: 15px;
+    background: #fff;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.06);
+    transition: 0.2s ease;
+    min-height: 170px;
+}
+
+.hold-order-card:hover {
+    box-shadow: 0 4px 14px rgba(0,0,0,0.1);
+    transform: translateY(-2px);
+}
+
+.hold-order-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    margin-bottom: 12px;
+    gap: 10px;
+}
+
+.hold-order-ref {
+    display: flex;
+    flex-direction: column;
+}
+
+.label-title {
+    font-size: 12px;
+    color: #777;
+    margin-bottom: 3px;
+    text-transform: uppercase;
+}
+
+.ref-value {
+    font-size: 16px;
+    font-weight: 600;
+    color: #333;
+    word-break: break-word;
+}
+
+.hold-order-price {
+    font-size: 14px;
+    padding: 6px 10px;
+    border-radius: 20px;
+    display: inline-block;
+}
+
+.hold-order-body {
+    margin-bottom: 14px;
+}
+
+.hold-order-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 6px 0;
+    border-bottom: 1px solid #f2f2f2;
+}
+
+.hold-order-row:last-child {
+    border-bottom: none;
+}
+
+.row-label {
+    font-weight: 600;
+    color: #666;
+}
+
+.row-value {
+    color: #333;
+    text-align: right;
+    max-width: 60%;
+    word-break: break-word;
+}
+
+.hold-order-actions {
+    display: flex;
+    justify-content: space-between;
+    gap: 8px;
+    margin-top: 10px;
+}
+
+.hold-order-actions .btn {
+    flex: 1;
+    border-radius: 6px;
+}
+
+.widget-panel {
+    padding-top: 8px;
 }
 
 @media  print {

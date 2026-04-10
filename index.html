@@ -46,10 +46,7 @@
                             <button id="viewRefOrders" data-toggle="modal" data-target="#holdOrdersModal" type="button" class="btn btn-info waves-effect waves-light">
                                     <span class="btn-label"><i class="fa fa-shopping-basket"></i> </span> Open Tabs
                             </button>
-            
-                            <button id="viewCustomerOrders" data-toggle="modal" data-target="#customerModal" type="button" onclick="$(this).getCustomerOrders()" class="btn btn-info waves-effect waves-light">
-                                    <span class="btn-label"><i class="fa fa-user"></i> </span> Customer Orders
-                            </button>
+        
                         
                     </div>
 
@@ -214,11 +211,11 @@
               <div class="card-box" id="card-box">
                   <div class="col-md-12">
                       <div class="row">
-                          <div class="col-md-10">
+                          <div class="col-md-11">
                               <select name="" id="customer" class="form-control">
                           </select>
                           </div>
-                          <div class="col-md-2">
+                          <div class="col-md-1 p-0">
                               <button data-toggle="modal" data-target="#newCustomer" class="btn btn-success"><i class="fa fa-plus"></i></button>
                           </div>
                       </div>
@@ -237,11 +234,11 @@
   
                           <thead>
                           <tr>
-                              <th>#</th>
-                              <th width="150px">Item</th>
-                              <th width="170px">Qty</th>
-                              <th>Price</th>
-                              <th width="5px">
+                              <th class="number">#</th>
+                              <th class="item">Item</th>
+                              <th class="qty" >Qty</th>
+                              <th class="price">Price</th>
+                              <th class="action">
                                   <button onclick="$(this).cancelOrder()" class="btn btn-danger btn-xs"><i class="fa fa-times"></i></button>
                               </th>
                           </tr>
@@ -271,7 +268,7 @@
   
                  </div>
   
-                  <div class="button-list pull-right">
+                  <div class="button-list cart-button">
 
                     <button onclick="$(this).submitDueOrder(3);" type="button" class="btn btn-info waves-effect waves-light">
                         <i class="fa fa-print"></i> 
@@ -289,7 +286,6 @@
                           <span class="btn-label"><i class="fa fa-money"></i></span>Pay
                       </button>
                   </div>
-                  <hr>
   
               </div>
           </div>
@@ -399,7 +395,6 @@
                               <a href="javascript:void(0)" id="cash" onclick="paymentType = 1" class="list-group-item active">
                                   Cash
                               </a>
-                            <a href="javascript:void(0)" id="card" onclick="paymentType = 3" class="list-group-item">Card</a>
                           </div>
                       </div>
                       <div class="col-md-8">
@@ -472,10 +467,6 @@
                               </div>
                           </div>
                           <br>
-                          <div class="input-group" id="cardInfo">
-                              <span class="input-group-addon" id="basic-addon3">Card Info </span>
-                              <input type="text" class="form-control" id="paymentInfo" aria-describedby="basic-addon3">
-                          </div>
                       </div>
                   </div>
               </div>
@@ -553,6 +544,10 @@
                         <div class="form-group">
                             <label for="userName">Product Name</label>
                             <input type="text" required="required"  name="name" parsley-trigger="change" placeholder="Enter a product name" class="form-control" id="productName">
+                        </div>
+                        <div class="form-group">
+                            <label for="product_sku">Barcode / Product Code</label>
+                            <input type="text" required="required" name="sku" placeholder="Scan or type barcode/code" class="form-control" id="product_sku">
                         </div>
                         <div class="form-group">
                             <label for="userName">Price</label>
@@ -782,24 +777,7 @@
 
 
  
-<div id="customerModal" class="modal fade bs-example-modal-lg" tabindex="-1" role="dialog" aria-labelledby="myLargeModalLabel" aria-hidden="true" style="display: none;">
-    <div class="modal-dialog modal-lg">
-        <div class="modal-content">
-            <div class="modal-header">
-                <button type="button" class="close" data-dismiss="modal" aria-hidden="true">×</button>
-                <h4 class="modal-title" id="myLargeModalLabel">Customer Orders</h4>
-            </div>
-            <div class="modal-body">
-                <input type="text" id="holdCustomerOrderInput" placeholder="Search order by customer name" class="holdCustomerOrderInput form-control">
-                <div class="customerOrderKeyboard"></div>
-                <br>
-                <div class="row" style="height: 460px; overflow: scroll;" id="randerCustomerOrders">
-                    <p>please wait <span class="dot"></span> </p>
-                </div>
-            </div>
-        </div>
-    </div>
-</div>
+
 
 
 

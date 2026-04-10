@@ -29,13 +29,11 @@ let moment = require('moment');
 let Swal = require('sweetalert2');
 let { ipcRenderer } = require('electron');
 let dotInterval = setInterval(function () { $(".dot").text('.') }, 3000);
-let Store = require('electron-store');
-const remote = require('electron').remote;
-const app = remote.app;
-let img_path = app.getPath('appData') + '/POS/uploads/';
+let img_path = process.env.APPDATA + '/POS/uploads/';
 let api = 'http://' + host + ':' + port + '/api/';
 let btoa = require('btoa');
-let jsPDF = require('jspdf');
+const jspdfLib = require('jspdf');
+const jsPDF = jspdfLib.jsPDF || jspdfLib;
 let html2canvas = require('html2canvas');
 let JsBarcode = require('jsbarcode');
 let macaddress = require('macaddress');
@@ -49,7 +47,16 @@ let auth_error = 'Incorrect username or password';
 let auth_empty = 'Please enter a username and password';
 let holdOrderlocation = $("#randerHoldOrders");
 let customerOrderLocation = $("#randerCustomerOrders");
-let storage = new Store();
+
+// Simple fs-based JSON store replacing electron-store (incompatible with Electron 14+)
+const _fs = require('fs');
+const _storePath = process.env.APPDATA + '/POS/storage.json';
+const storage = {
+    _data: (() => { try { return JSON.parse(_fs.readFileSync(_storePath, 'utf8')); } catch (e) { return {}; } })(),
+    get(key) { return this._data[key]; },
+    set(key, val) { this._data[key] = val; _fs.writeFileSync(_storePath, JSON.stringify(this._data)); },
+    delete(key) { delete this._data[key]; _fs.writeFileSync(_storePath, JSON.stringify(this._data)); }
+};
 let settings;
 let platform;
 let user = {};
@@ -218,13 +225,13 @@ if (auth == undefined) {
                         categories.push(item.category);
                     }
 
-                    let item_info = `<div class="col-lg-2 box ${item.category}"
+                    let item_info = `<div class="col-lg-2 pt-1 box ${item.category}"
                                 onclick="$(this).addToCart(${item._id}, ${item.quantity}, ${item.stock})">
                             <div class="widget-panel widget-style-2 ">                    
                             <div id="image"><img src="${item.img == "" ? "./assets/images/default.jpg" : img_path + item.img}" id="product_img" alt=""></div>                    
                                         <div class="text-muted m-t-5 text-center">
                                         <div class="name" id="product_name">${item.name}</div> 
-                                        <span class="sku">${item.sku}</span>
+                                        <span class="sku">${item.sku || item._id}</span>
                                         <span class="stock">STOCK </span><span class="count">${item.stock == 1 ? item.quantity : 'N/A'}</span></div>
                                         <sp class="text-success text-center"><b data-plugin="counterup">${settings.symbol + item.price}</b> </sp>
                             </div>
@@ -397,7 +404,7 @@ if (auth == undefined) {
             item = {
                 id: data._id,
                 product_name: data.name,
-                sku: data.sku,
+                sku: data.sku || data._id,
                 price: data.price,
                 quantity: 1
             };
@@ -467,9 +474,9 @@ if (auth == undefined) {
             $.each(cartList, function (index, data) {
                 $('#cartTable > tbody').append(
                     $('<tr>').append(
-                        $('<td>', { text: index + 1 }),
-                        $('<td>', { text: data.product_name }),
-                        $('<td>').append(
+                        $('<td>', { class: 'number', text: index + 1 }),
+                        $('<td>', { class: 'item', text: data.product_name }),
+                        $('<td>', { class: 'qty' }).append(
                             $('<div>', { class: 'input-group' }).append(
                                 $('<div>', { class: 'input-group-btn btn-xs' }).append(
                                     $('<button>', {
@@ -485,7 +492,9 @@ if (auth == undefined) {
                                     value: data.quantity,
                                     onInput: '$(this).qtInput(' + index + ')'
                                 }),
-                                $('<div>', { class: 'input-group-btn btn-xs' }).append(
+                                $('<div>', {
+                                    class: 'input-group-btn btn-xs d-flex justify-content-center align-items-center'
+                                }).append(
                                     $('<button>', {
                                         class: 'btn btn-default btn-xs',
                                         onclick: '$(this).qtIncrement(' + index + ')'
@@ -495,8 +504,8 @@ if (auth == undefined) {
                                 )
                             )
                         ),
-                        $('<td>', { text: settings.symbol + (data.price * data.quantity).toFixed(2) }),
-                        $('<td>').append(
+                        $('<td>', { class: 'price', text: settings.symbol + (data.price * data.quantity).toFixed(2) }),
+                        $('<td>', { class: 'action' }).append(
                             $('<button>', {
                                 class: 'btn btn-danger btn-xs',
                                 onclick: '$(this).deleteFromCart(' + index + ')'
@@ -596,6 +605,7 @@ if (auth == undefined) {
 
         $("#payButton").on('click', function () {
             if (cart.length != 0) {
+                paymentType = 0; // Cash only
                 $("#paymentModel").modal('toggle');
             } else {
                 Swal.fire(
@@ -648,21 +658,8 @@ if (auth == undefined) {
             let change = $("#change").text() == "" ? "" : parseFloat($("#change").text()).toFixed(2);
             let refNumber = $("#refNumber").val();
             let orderNumber = holdOrder;
-            let type = "";
+            let type = "Cash";
             let tax_row = "";
-
-
-            switch (paymentType) {
-
-                case 1: type = "Cheque";
-                    break;
-
-                case 2: type = "Card";
-                    break;
-
-                default: type = "Cash";
-
-            }
 
 
             if (paid != "") {
@@ -815,8 +812,8 @@ if (auth == undefined) {
                 order_type: 1,
                 items: cart,
                 date: currentTime,
-                payment_type: type,
-                payment_info: $("#paymentInfo").val(),
+                payment_type: 0,
+                payment_info: "",
                 total: orderTotal,
                 paid: paid,
                 change: change,
@@ -886,36 +883,65 @@ if (auth == undefined) {
         $.fn.randerHoldOrders = function (data, renderLocation, orderType) {
             $.each(data, function (index, order) {
                 $(this).calculatePrice(order);
+
                 renderLocation.append(
-                    $('<div>', { class: orderType == 1 ? 'col-md-3 order' : 'col-md-3 customer-order' }).append(
-                        $('<a>').append(
-                            $('<div>', { class: 'card-box order-box' }).append(
-                                $('<p>').append(
-                                    $('<b>', { text: 'Ref :' }),
-                                    $('<span>', { text: order.ref_number, class: 'ref_number' }),
-                                    $('<br>'),
-                                    $('<b>', { text: 'Price :' }),
-                                    $('<span>', { text: order.total, class: "label label-info", style: 'font-size:14px;' }),
-                                    $('<br>'),
-                                    $('<b>', { text: 'Items :' }),
-                                    $('<span>', { text: order.items.length }),
-                                    $('<br>'),
-                                    $('<b>', { text: 'Customer :' }),
-                                    $('<span>', { text: order.customer != 0 ? order.customer.name : 'Walk in customer', class: 'customer_name' })
+                    $('<div>', {
+                        class: orderType == 1 ? 'col-md-3 order' : 'col-md-3 customer-order'
+                    }).append(
+                        $('<div>', { class: 'hold-order-card card-box order-box' }).append(
+
+                            // Header
+                            $('<div>', { class: 'hold-order-header' }).append(
+                                $('<div>', { class: 'hold-order-ref' }).append(
+                                    $('<span>', { class: 'label-title', text: 'Ref' }),
+                                    $('<span>', { class: 'ref_number ref-value', text: order.ref_number })
                                 ),
-                                $('<button>', { class: 'btn btn-danger del', onclick: '$(this).deleteOrder(' + index + ',' + orderType + ')' }).append(
-                                    $('<i>', { class: 'fa fa-trash' })
+                                $('<span>', {
+                                    class: 'label label-info hold-order-price',
+                                    text: settings.symbol + order.total
+                                })
+                            ),
+
+                            // Body
+                            $('<div>', { class: 'hold-order-body' }).append(
+                                $('<div>', { class: 'hold-order-row' }).append(
+                                    $('<span>', { class: 'row-label', text: 'Items' }),
+                                    $('<span>', { class: 'row-value', text: order.items.length })
+                                ),
+                                $('<div>', { class: 'hold-order-row' }).append(
+                                    $('<span>', { class: 'row-label', text: 'Customer' }),
+                                    $('<span>', {
+                                        class: 'row-value customer_name',
+                                        text: order.customer != 0 ? order.customer.name : 'Walk in customer'
+                                    })
+                                )
+                            ),
+
+                            // Actions
+                            $('<div>', { class: 'hold-order-actions' }).append(
+                                $('<button>', {
+                                    class: 'btn btn-default btn-sm',
+                                    onclick: '$(this).orderDetails(' + index + ',' + orderType + ')',
+                                    title: 'View order details'
+                                }).append(
+                                    $('<i>', { class: 'fa fa-shopping-basket' }),
+                                    $('<span>', { text: ' Details', style: 'margin-left:6px;' })
                                 ),
 
-                                $('<button>', { class: 'btn btn-default', onclick: '$(this).orderDetails(' + index + ',' + orderType + ')' }).append(
-                                    $('<span>', { class: 'fa fa-shopping-basket' })
+                                $('<button>', {
+                                    class: 'btn btn-danger btn-sm del',
+                                    onclick: '$(this).deleteOrder(' + index + ',' + orderType + ')',
+                                    title: 'Delete order'
+                                }).append(
+                                    $('<i>', { class: 'fa fa-trash' }),
+                                    $('<span>', { text: ' Delete', style: 'margin-left:6px;' })
                                 )
                             )
                         )
                     )
-                )
-            })
-        }
+                );
+            });
+        };
 
 
         $.fn.calculatePrice = function (data) {
@@ -1089,8 +1115,6 @@ if (auth == undefined) {
 
         $("#confirmPayment").hide();
 
-        $("#cardInfo").hide();
-
         $("#payment").on('input', function () {
             $(this).calculateChange();
         });
@@ -1147,11 +1171,13 @@ if (auth == undefined) {
         $('#newProductModal').click(function () {
             $('#saveProduct').get(0).reset();
             $('#current_img').text('');
+            $('#product_id').val('');
         });
 
 
         $('#saveProduct').submit(function (e) {
             e.preventDefault();
+            $('#product_sku').val(($('#product_sku').val() || '').trim());
 
             $(this).attr('action', api + 'inventory/product');
             $(this).attr('method', 'POST');
@@ -1180,7 +1206,20 @@ if (auth == undefined) {
                         }
                     });
                 }, error: function (data) {
-                    console.log(data);
+                    if (data.status === 409) {
+                        Swal.fire(
+                            'Duplicate barcode',
+                            'This barcode/code is already used by another product.',
+                            'warning'
+                        );
+                    } else {
+                        console.log(data);
+                        Swal.fire(
+                            'Save failed',
+                            'Could not save product. Please try again.',
+                            'error'
+                        );
+                    }
                 }
             });
 
@@ -1240,6 +1279,7 @@ if (auth == undefined) {
             }).prop("selected", true);
 
             $('#productName').val(allProducts[index].name);
+            $('#product_sku').val(allProducts[index].sku || allProducts[index]._id);
             $('#product_price').val(allProducts[index].price);
             $('#quantity').val(allProducts[index].quantity);
 
@@ -1507,7 +1547,7 @@ if (auth == undefined) {
 
 
                 product_list += `<tr>
-            <td><img id="`+ product._id + `"></td>
+            <td><img id="`+ product._id + `"><span style="display:none;">${product.sku || product._id}</span></td>
             <td><img style="max-height: 50px; max-width: 50px; border: 1px solid #ddd;" src="${product.img == "" ? "./assets/images/default.jpg" : img_path + product.img}" id="product_img"></td>
             <td>${product.name}</td>
             <td>${settings.symbol}${product.price}</td>
@@ -1520,7 +1560,7 @@ if (auth == undefined) {
                     $('#product_list').html(product_list);
 
                     products.forEach(pro => {
-                        $("#" + pro._id + "").JsBarcode(pro._id, {
+                        $("#" + pro._id + "").JsBarcode(String(pro.sku || pro._id), {
                             width: 2,
                             height: 25,
                             fontSize: 14
@@ -1881,37 +1921,43 @@ if (auth == undefined) {
     });
 
 
-    $('#print_list').click(function () {
+    $('#print_list').click(async function () {
 
         $("#loading").show();
-
         $('#productList').DataTable().destroy();
 
-        const filename = 'productList.pdf';
+        try {
+            const savePath = await ipcRenderer.invoke('dialog:save-pdf', 'productList.pdf');
 
-        html2canvas($('#all_products').get(0)).then(canvas => {
-            let height = canvas.height * (25.4 / 96);
-            let width = canvas.width * (25.4 / 96);
-            let pdf = new jsPDF('p', 'mm', 'a4');
-            pdf.addImage(canvas.toDataURL('image/png'), 'PNG', 0, 0, width, height);
+            if (savePath) {
+                const canvas = await html2canvas($('#all_products').get(0));
+                let height = canvas.height * (25.4 / 96);
+                let width = canvas.width * (25.4 / 96);
+                let pdf = new jsPDF('p', 'mm', 'a4');
+                pdf.addImage(canvas.toDataURL('image/png'), 'PNG', 0, 0, width, height);
 
+                const pdfBuffer = Buffer.from(pdf.output('arraybuffer'));
+                _fs.writeFileSync(savePath, pdfBuffer);
+
+                Swal.fire('Downloaded', 'Product list saved successfully.', 'success');
+            }
+        } catch (err) {
+            console.log(err);
+            Swal.fire('Download failed', 'Could not save product list PDF.', 'error');
+        } finally {
             $("#loading").hide();
-            pdf.save(filename);
-        });
 
+            $('#productList').DataTable({
+                "order": [[1, "desc"]]
+                , "autoWidth": false
+                , "info": true
+                , "JQueryUI": true
+                , "ordering": true
+                , "paging": false
+            });
 
-
-        $('#productList').DataTable({
-            "order": [[1, "desc"]]
-            , "autoWidth": false
-            , "info": true
-            , "JQueryUI": true
-            , "ordering": true
-            , "paging": false
-        });
-
-        $(".loading").hide();
-
+            $(".loading").hide();
+        }
     });
 
 }
@@ -1977,7 +2023,7 @@ function loadTransactions() {
                                 <td>${settings.symbol + trans.total}</td>
                                 <td>${trans.paid == "" ? "" : settings.symbol + trans.paid}</td>
                                 <td>${trans.change ? settings.symbol + Math.abs(trans.change).toFixed(2) : ''}</td>
-                                <td>${trans.paid == "" ? "" : trans.payment_type == 0 ? "Cash" : 'Card'}</td>
+                                <td>${trans.paid == "" ? "" : "Cash"}</td>
                                 <td>${trans.till}</td>
                                 <td>${trans.user}</td>
                                 <td>${trans.paid == "" ? '<button class="btn btn-dark"><i class="fa fa-search-plus"></i></button>' : '<button onClick="$(this).viewTransaction(' + index + ')" class="btn btn-info"><i class="fa fa-search-plus"></i></button></td>'}</tr>
@@ -2146,14 +2192,7 @@ $.fn.viewTransaction = function (index) {
     });
 
 
-    switch (allTransactions[index].payment_type) {
-
-        case 2: type = "Card";
-            break;
-
-        default: type = "Cash";
-
-    }
+    type = "Cash";
 
 
     if (allTransactions[index].paid != "") {
@@ -2357,5 +2396,6 @@ $('#quit').click(function () {
         }
     });
 });
+
 
 

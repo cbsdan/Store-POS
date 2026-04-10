@@ -78,10 +78,6 @@
 .fa.fa-pull-right {
   margin-left: .3em;
 }
-/* Deprecated as of 4.4.0 */
-.pull-right {
-  float: right;
-}
 .pull-left {
   float: left;
 }
@@ -3331,11 +3327,6 @@
 [class*=" md-"].pull-left {
   float: left;
   margin-right: .3em;
-}
-[class^="md-"].pull-right,
-[class*=" md-"].pull-right {
-  float: right;
-  margin-left: .3em;
 }
 .md-spin {
   -webkit-animation: md-spin 1.5s infinite linear;

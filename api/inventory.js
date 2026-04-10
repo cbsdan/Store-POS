@@ -31,6 +31,7 @@ let inventoryDB = new Datastore( {
 
 
 inventoryDB.ensureIndex({ fieldName: '_id', unique: true });
+inventoryDB.ensureIndex({ fieldName: 'sku', unique: true, sparse: true });
 
  
 app.get( "/", function ( req, res ) {
@@ -87,35 +88,57 @@ app.post( "/product", upload.single('imagename'), function ( req, res ) {
         }
     }
     
+    let isCreate = req.body.id == "";
+    let productId = isCreate ? Math.floor(Date.now() / 1000) : parseInt(req.body.id);
+    let requestedSku = (req.body.sku || '').trim();
+
     let Product = {
-        _id: parseInt(req.body.id),
+        _id: productId,
+        sku: requestedSku,
         price: req.body.price,
         category: req.body.category,
         quantity: req.body.quantity == "" ? 0 : req.body.quantity,
         name: req.body.name,
-        stock: req.body.stock == "on" ? 0 : 1,    
-        img: image        
+        stock: req.body.stock == "on" ? 0 : 1,
+        img: image
     }
 
-    if(req.body.id == "") { 
-        Product._id = Math.floor(Date.now() / 1000);
-        inventoryDB.insert( Product, function ( err, product ) {
-            if ( err ) res.status( 500 ).send( err );
-            else res.send( product );
+    function saveProductWithUniqueSku() {
+        Product.sku = Product.sku || String(productId);
+
+        inventoryDB.findOne({ sku: Product.sku }, function (skuErr, existingProductBySku) {
+            if (skuErr) return res.status(500).send(skuErr);
+
+            if (existingProductBySku && existingProductBySku._id !== productId) {
+                return res.status(409).send({ message: "Barcode already exists. Please use a unique code." });
+            }
+
+            if (isCreate) {
+                inventoryDB.insert(Product, function (err, product) {
+                    if (err) res.status(500).send(err);
+                    else res.send(product);
+                });
+            } else {
+                inventoryDB.update({
+                    _id: productId
+                }, Product, {}, function (err) {
+                    if (err) res.status(500).send(err);
+                    else res.sendStatus(200);
+                });
+            }
         });
     }
-    else { 
-        inventoryDB.update( {
-            _id: parseInt(req.body.id)
-        }, Product, {}, function (
-            err,
-            numReplaced,
-            product
-        ) {
-            if ( err ) res.status( 500 ).send( err );
-            else res.sendStatus( 200 );
-        } );
 
+    if (isCreate) {
+        saveProductWithUniqueSku();
+    } else {
+        inventoryDB.findOne({ _id: productId }, function (err, currentProduct) {
+            if (err) return res.status(500).send(err);
+            if (!currentProduct) return res.status(404).send({ message: "Product not found." });
+
+            Product.sku = Product.sku || currentProduct.sku || String(productId);
+            saveProductWithUniqueSku();
+        });
     }
 
 });
@@ -135,12 +158,25 @@ app.delete( "/product/:productId", function ( req, res ) {
  
 
 app.post( "/product/sku", function ( req, res ) {
-    var request = req.body;
-    inventoryDB.findOne( {
-            _id: parseInt(request.skuCode)
-    }, function ( err, product ) {
-         res.send( product );
-    } );
+    let request = req.body;
+    let scannedCode = String(request.skuCode || '').trim();
+    if (!scannedCode) return res.send({});
+
+    inventoryDB.findOne({
+        sku: scannedCode
+    }, function (err, product) {
+        if (err) return res.status(500).send(err);
+        if (product || !/^\d+$/.test(scannedCode)) {
+            return res.send(product || {});
+        }
+
+        inventoryDB.findOne({
+            _id: parseInt(scannedCode)
+        }, function (fallbackErr, fallbackProduct) {
+            if (fallbackErr) return res.status(500).send(fallbackErr);
+            res.send(fallbackProduct || {});
+        });
+    });
 } );
 
  

@@ -1,3 +1,12 @@
+const fs = require("fs");
+const path = require("path");
+
+// Ensure required directories exist before NeDB tries to load database files
+const dbDir = path.join(process.env.APPDATA, "POS", "server", "databases");
+const uploadsDir = path.join(process.env.APPDATA, "POS", "uploads");
+fs.mkdirSync(dbDir, { recursive: true });
+fs.mkdirSync(uploadsDir, { recursive: true });
+
 let express = require("express"),
   http = require("http"),
   app = require("express")(),
@@ -36,4 +45,11 @@ app.use("/api/settings", require("./api/settings"));
 app.use("/api/users", require("./api/users"));
 app.use("/api", require("./api/transactions"));
 
-server.listen(PORT, () => console.log(`Listening on PORT ${PORT}`));
+module.exports = new Promise((resolve) => {
+  server.listen(PORT, () => {
+    console.log(`Listening on PORT ${PORT}`);
+    // Seed default admin user on every startup
+    http.get(`http://localhost:${PORT}/api/users/check`, () => {});
+    resolve();
+  });
+});

@@ -74,22 +74,6 @@ $(document).ready(function(){
     });
  
 
-
-    var $list = $('.list-group-item').click(function () {
-       $list.removeClass('active');
-       $(this).addClass('active');
-       if(this.id == 'check'){
-            $("#cardInfo").show();
-            $("#cardInfo .input-group-addon").text("Check Info");
-       }else if(this.id == 'card'){
-           $("#cardInfo").show();
-           $("#cardInfo .input-group-addon").text("Card Info");
-       }else if(this.id == 'cash'){
-           $("#cardInfo").hide();
-       }
-    });
-
-
     $.fn.go = function (value,isDueInput) {
         if(isDueInput){
             $("#refNumber").val($("#refNumber").val()+""+value)

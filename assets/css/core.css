@@ -377,6 +377,17 @@ a:focus {
   margin-left: -8px;
   margin-bottom: -12px;
 }
+.cart-button {
+  display: flex;
+  width: 100%;
+  align-items: flex-end;
+  gap: 5px;
+  margin-bottom: 10px;
+}
+.cart-button > * {
+    flex: 1;
+}
+
 .button-list .btn {
   margin-bottom: 12px;
   margin-left: 8px;
