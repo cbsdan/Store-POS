@@ -30,7 +30,6 @@ function createWindow() {
 
   mainWindow.maximize();
   mainWindow.show();
-  mainWindow.webContents.openDevTools();
 
   // Normalize zoom shortcuts across keyboard layouts:
   // Ctrl/Cmd + +, =, NumpadAdd, -, NumpadSubtract, and 0.

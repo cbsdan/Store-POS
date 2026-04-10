@@ -217,3 +217,35 @@ app.decrementInventory = function ( products ) {
         } );
     } );
 };
+
+
+app.incrementInventory = function ( products ) {
+
+    async.eachSeries( products, function ( transactionProduct, callback ) {
+        inventoryDB.findOne( {
+            _id: parseInt(transactionProduct.id)
+        }, function (
+            err,
+            product
+        ) {
+
+            if ( err || !product ) {
+                callback();
+            } else {
+                let currentQuantity = parseInt(product.quantity || 0);
+                let returnedQuantity = parseInt(transactionProduct.quantity || 0);
+                let updatedQuantity = currentQuantity + returnedQuantity;
+
+                inventoryDB.update( {
+                        _id: parseInt(product._id)
+                    }, {
+                        $set: {
+                            quantity: updatedQuantity
+                        }
+                    }, {},
+                    callback
+                );
+            }
+        } );
+    } );
+};

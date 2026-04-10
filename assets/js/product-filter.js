@@ -78,6 +78,7 @@ $(document).ready(function(){
         if(isDueInput){
             $("#refNumber").val($("#refNumber").val()+""+value)
         }else{
+            if ($("#payment").prop('readonly')) return;
             $("#payment").val($("#payment").val()+""+value);
             $(this).calculateChange();
         }
@@ -85,17 +86,28 @@ $(document).ready(function(){
 
 
     $.fn.digits = function(){
+        if ($("#payment").prop('readonly')) return;
         $("#payment").val($("#payment").val()+".");
         $(this).calculateChange();
     }
 
     $.fn.calculateChange = function () {
-        var change = $("#payablePrice").val() - $("#payment").val();
+        let payable = parseFloat($("#payablePrice").val());
+        let paid = parseFloat($("#payment").val());
+
+        if (isNaN(payable) || isNaN(paid)) {
+            $("#change").text('0.00');
+            $("#confirmPayment").hide();
+            return;
+        }
+
+        let change = payable - paid;
         if(change <= 0){
             $("#change").text(change.toFixed(2));
         }else{
-            $("#change").text('0')
+            $("#change").text('0.00')
         }
+
         if(change <= 0){
             $("#confirmPayment").show();
         }else{

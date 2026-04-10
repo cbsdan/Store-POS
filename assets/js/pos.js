@@ -13,7 +13,7 @@ let holdOrder = 0;
 let vat = 0;
 let perms = null;
 let deleteId = 0;
-let paymentType = 0;
+let paymentType = 1;
 let receipt = '';
 let totalVat = 0;
 let subTotal = 0;
@@ -68,6 +68,193 @@ let end_date = moment(end).toDate();
 let by_till = 0;
 let by_user = 0;
 let by_status = 1;
+const PAYMENT_METHODS = {
+    1: 'Cash',
+    2: 'GCash',
+    3: 'Maya',
+    4: 'Card',
+    5: 'Bank Transfer'
+};
+const TRANSACTION_STATUS = {
+    HOLD: 0,
+    PAID: 1,
+    VOIDED: 2,
+    REFUNDED: 3
+};
+
+function normalizeTransactionStatus(statusValue) {
+    let parsed = parseInt(statusValue, 10);
+    return isNaN(parsed) ? TRANSACTION_STATUS.HOLD : parsed;
+}
+
+function getTransactionStatusLabel(statusValue) {
+    let status = normalizeTransactionStatus(statusValue);
+    if (status === TRANSACTION_STATUS.PAID) return 'Paid';
+    if (status === TRANSACTION_STATUS.VOIDED) return 'Voided';
+    if (status === TRANSACTION_STATUS.REFUNDED) return 'Refunded';
+    return 'Unpaid / Hold';
+}
+
+function getTransactionStatusBadge(statusValue) {
+    let status = normalizeTransactionStatus(statusValue);
+    if (status === TRANSACTION_STATUS.PAID) return '<span class="label label-success">Paid</span>';
+    if (status === TRANSACTION_STATUS.VOIDED) return '<span class="label label-warning">Voided</span>';
+    if (status === TRANSACTION_STATUS.REFUNDED) return '<span class="label label-danger">Refunded</span>';
+    return '<span class="label label-default">Unpaid / Hold</span>';
+}
+
+function escapeCsv(value) {
+    if (value === undefined || value === null) return '""';
+    return `"${String(value).replace(/"/g, '""')}"`;
+}
+
+function buildComplianceCsv(reportData) {
+    let lines = [];
+    let summary = reportData.summary || {};
+    let serialRanges = reportData.serial_ranges || {};
+
+    lines.push('BIR HARDENING COMPLIANCE REPORT');
+    lines.push(`Generated At,${escapeCsv(reportData.generated_at || '')}`);
+    lines.push(`Period Start,${escapeCsv(reportData.criteria && reportData.criteria.start ? reportData.criteria.start : '')}`);
+    lines.push(`Period End,${escapeCsv(reportData.criteria && reportData.criteria.end ? reportData.criteria.end : '')}`);
+    lines.push(`Till Filter,${escapeCsv(reportData.criteria && reportData.criteria.till ? reportData.criteria.till : '0')}`);
+    lines.push(`User Filter,${escapeCsv(reportData.criteria && reportData.criteria.user ? reportData.criteria.user : '0')}`);
+    lines.push('');
+    lines.push('SUMMARY,VALUE');
+    lines.push(`Paid Transactions,${escapeCsv(summary.paid_transactions || 0)}`);
+    lines.push(`Hold Transactions,${escapeCsv(summary.hold_transactions || 0)}`);
+    lines.push(`Voided Transactions,${escapeCsv(summary.voided_transactions || 0)}`);
+    lines.push(`Refunded Transactions,${escapeCsv(summary.refunded_transactions || 0)}`);
+    lines.push(`Paid Sales Amount,${escapeCsv(summary.paid_sales_amount || 0)}`);
+    lines.push(`Voided Sales Amount,${escapeCsv(summary.voided_sales_amount || 0)}`);
+    lines.push(`Refunded Sales Amount,${escapeCsv(summary.refunded_sales_amount || 0)}`);
+    lines.push(`Net Sales Amount,${escapeCsv(summary.net_sales_amount || 0)}`);
+    lines.push(`Paid VAT Amount,${escapeCsv(summary.paid_vat_amount || 0)}`);
+    lines.push(`Refunded VAT Amount,${escapeCsv(summary.refunded_vat_amount || 0)}`);
+    lines.push(`Net VAT Amount,${escapeCsv(summary.net_vat_amount || 0)}`);
+    lines.push(`Invoice Serial First,${escapeCsv(serialRanges.invoice_first || '')}`);
+    lines.push(`Invoice Serial Last,${escapeCsv(serialRanges.invoice_last || '')}`);
+    lines.push(`Refund Serial First,${escapeCsv(serialRanges.refund_first || '')}`);
+    lines.push(`Refund Serial Last,${escapeCsv(serialRanges.refund_last || '')}`);
+    lines.push('');
+    lines.push('TRANSACTIONS');
+    lines.push('Invoice,Date,Status,Total,Tax,Paid,Payment Method,Payment Ref,Customer,Cashier,Till,Void Reason,Refund Reason,Refund Ref');
+
+    (reportData.transactions || []).forEach(function (txn) {
+        lines.push([
+            escapeCsv(txn.order || txn._id || ''),
+            escapeCsv(moment(txn.date).format('YYYY-MM-DD HH:mm:ss')),
+            escapeCsv(getTransactionStatusLabel(txn.status)),
+            escapeCsv(txn.total || 0),
+            escapeCsv(txn.tax || 0),
+            escapeCsv(txn.paid || ''),
+            escapeCsv(getPaymentMethodLabel(txn.payment_type, txn.payment_method)),
+            escapeCsv(txn.payment_info || ''),
+            escapeCsv(txn.customer && txn.customer.name ? txn.customer.name : 'Walk in customer'),
+            escapeCsv(txn.user || ''),
+            escapeCsv(txn.till || ''),
+            escapeCsv(txn.void_reason || ''),
+            escapeCsv(txn.refund_reason || ''),
+            escapeCsv(txn.refund_reference || '')
+        ].join(','));
+    });
+
+    lines.push('');
+    lines.push('AUDIT LOGS');
+    lines.push('Date,Action,Transaction ID,Order,User,Reason,Reference');
+
+    (reportData.audit_logs || []).forEach(function (log) {
+        let details = log.details || {};
+        lines.push([
+            escapeCsv(moment(log.date).format('YYYY-MM-DD HH:mm:ss')),
+            escapeCsv(log.action || ''),
+            escapeCsv(details.transaction_id || ''),
+            escapeCsv(details.order || ''),
+            escapeCsv(details.by || details.user || ''),
+            escapeCsv(details.reason || ''),
+            escapeCsv(details.refund_reference || '')
+        ].join(','));
+    });
+
+    return lines.join('\n');
+}
+
+function downloadCsvFile(fileName, csvText) {
+    const blob = new Blob([csvText], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = fileName;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+}
+
+function normalizePaymentType(typeValue) {
+    let parsed = parseInt(typeValue, 10);
+    return PAYMENT_METHODS[parsed] ? parsed : 1;
+}
+
+function isCashPayment(typeValue) {
+    return normalizePaymentType(typeValue) === 1;
+}
+
+function getPaymentMethodLabel(typeValue, fallbackLabel) {
+    if (fallbackLabel && String(fallbackLabel).trim() != '') return String(fallbackLabel).trim();
+    return PAYMENT_METHODS[normalizePaymentType(typeValue)];
+}
+
+function getSafeSettingValue(value) {
+    if (value === undefined || value === null || String(value).trim() === '') return '__________________';
+    return String(value).trim();
+}
+
+function buildBirReceiptDetails() {
+    return `
+            MIN: ${getSafeSettingValue(settings && settings.min)}<br>
+            POS/CRM Serial No.: ${getSafeSettingValue(settings && settings.pos_serial_no)}<br>
+            Supplier Name: ${getSafeSettingValue(settings && settings.supplier_name)}<br>
+            Supplier TIN: ${getSafeSettingValue(settings && settings.supplier_tin)}<br>
+            Supplier Address: ${getSafeSettingValue(settings && settings.supplier_address)}<br>
+            Supplier Accreditation No.: ${getSafeSettingValue(settings && settings.supplier_accreditation_no)}<br>
+            Supplier Accreditation Date: ${getSafeSettingValue(settings && settings.supplier_accreditation_date)}<br>
+            BIR Permit No.: ${getSafeSettingValue(settings && settings.bir_permit_no)}<br>
+            ATP/OCN No.: ${getSafeSettingValue(settings && settings.atp_ocn_no)}<br>
+            ATP/OCN Date Issued: ${getSafeSettingValue(settings && settings.atp_date_issued)}<br>
+            Approved Serial Nos.: ${getSafeSettingValue(settings && settings.approved_serial_no)}<br>`;
+}
+
+function setPaymentMethod(typeValue) {
+    paymentType = normalizePaymentType(typeValue);
+
+    $('#paymentMethods .list-group-item').removeClass('active');
+    $('#paymentMethods .list-group-item[data-payment-type="' + paymentType + '"]').addClass('active');
+
+    let isCash = isCashPayment(paymentType);
+    let payableAmount = parseFloat($("#payablePrice").val() || 0);
+    let formattedPayable = isNaN(payableAmount) ? '' : payableAmount.toFixed(2);
+
+    if (isCash) {
+        $("#payment").prop('readonly', false);
+        $("#payment_info_group").hide();
+        $("#payment_info").val('');
+        if (!$("#payment").val()) {
+            $("#change").text('0.00');
+            $("#confirmPayment").hide();
+        } else {
+            $("#payment").calculateChange();
+        }
+        return;
+    }
+
+    let methodLabel = getPaymentMethodLabel(paymentType);
+    $("#payment_info_label").text(methodLabel + " Reference No.");
+    $("#payment_info_group").show();
+    $("#payment").val(formattedPayable).prop('readonly', true);
+    $("#change").text('0.00');
+    $("#confirmPayment").show();
+}
 
 function isVatChargeEnabled() {
     if (!settings) return false;
@@ -353,8 +540,17 @@ if (auth == undefined) {
 
                 customers.forEach(cust => {
 
-                    let customer = `<option value='{"id": ${cust._id}, "name": "${cust.name}"}'>${cust.name}</option>`;
-                    $('#customer').append(customer);
+                    $('#customer').append(
+                        $('<option>', {
+                            value: JSON.stringify({
+                                id: cust._id,
+                                name: cust.name,
+                                tin: cust.tin || '',
+                                address: cust.address || ''
+                            }),
+                            text: cust.name
+                        })
+                    );
                 });
 
                 //  $('#customer').chosen();
@@ -750,7 +946,10 @@ if (auth == undefined) {
 
         $("#payButton").on('click', function () {
             if (cart.length != 0) {
-                paymentType = 0; // Cash only
+                $("#payment").val('');
+                $("#payment_info").val('');
+                $("#change").text('0.00');
+                setPaymentMethod(1);
                 $("#paymentModel").modal('toggle');
             } else {
                 Swal.fire(
@@ -760,6 +959,11 @@ if (auth == undefined) {
                 );
             }
 
+        });
+
+        $('body').on('click', '#paymentMethods .list-group-item', function () {
+            let selectedType = $(this).attr('data-payment-type');
+            setPaymentMethod(selectedType);
         });
 
 
@@ -796,39 +1000,29 @@ if (auth == undefined) {
                 let unitPrice = parseFloat(item.price);
                 let lineAmount = unitPrice * parseFloat(item.quantity);
                 items += "<tr><td>" + item.product_name + " <small>(" + formatTaxTypeLabel(getProductTaxType(item)) + ")</small></td><td style=\"text-align:center;\">" + item.quantity + "</td><td style=\"text-align:right;\">" + settings.symbol + unitPrice.toFixed(2) + "</td><td style=\"text-align:right;\">" + settings.symbol + lineAmount.toFixed(2) + "</td></tr>";
-
             });
 
             let currentTime = new Date(moment());
-
             let discount = $("#inputDiscount").val();
             let date = moment(currentTime).format("YYYY-MM-DD HH:mm:ss");
-            let paid = $("#payment").val() == "" ? "" : parseFloat($("#payment").val()).toFixed(2);
-            let change = $("#change").text() == "" ? "" : parseFloat($("#change").text()).toFixed(2);
+            let rawPaid = $("#payment").val();
+            let paid = rawPaid == "" ? "" : parseFloat(rawPaid).toFixed(2);
+            let rawChange = $("#change").text() == "" ? 0 : parseFloat($("#change").text());
+            let change = isNaN(rawChange) ? "0.00" : rawChange.toFixed(2);
             let refNumber = $("#refNumber").val();
-            let orderNumber = holdOrder;
-            let type = "Cash";
+            let type = getPaymentMethodLabel(paymentType);
+            let paymentInfo = ($("#payment_info").val() || '').trim();
             let tax_rows = buildTaxRowsForReceipt(vatBreakdown, totalVat, getVatPricingMode());
             let classification_rows = buildVatClassificationRows(vatBreakdown);
 
-
-            if (paid != "") {
-                payment = `<tr>
-                        <td colspan="3">Amount Tendered</td>
-                        <td style="text-align:right;">${settings.symbol + paid}</td>
-                    </tr>
-                    <tr>
-                        <td colspan="3">Change</td>
-                        <td style="text-align:right;">${settings.symbol + Math.abs(change).toFixed(2)}</td>
-                    </tr>
-                    <tr>
-                        <td colspan="3">Payment Method</td>
-                        <td style="text-align:right;">${type}</td>
-                    </tr>`
+            if (!isCashPayment(paymentType)) {
+                if (paid == "") {
+                    paid = parseFloat(orderTotal).toFixed(2);
+                }
+                change = "0.00";
             }
 
             if (status == 0) {
-
                 if ($("#customer").val() == 0 && $("#refNumber").val() == "") {
                     Swal.fire(
                         'Reference Required!',
@@ -840,164 +1034,193 @@ if (auth == undefined) {
                 }
             }
 
+            let transactionId = holdOrder != 0 ? holdOrder : Math.floor(Date.now() / 1000);
+            method = holdOrder != 0 ? 'PUT' : 'POST';
+
+            function submitWithOrderNumber(orderNumber) {
+                if (paid != "") {
+                    payment = `<tr>
+                            <td colspan="3">${isCashPayment(paymentType) ? 'Amount Tendered' : 'Amount Paid'}</td>
+                            <td style="text-align:right;">${settings.symbol + paid}</td>
+                        </tr>`;
+
+                    if (isCashPayment(paymentType)) {
+                        payment += `<tr>
+                            <td colspan="3">Change</td>
+                            <td style="text-align:right;">${settings.symbol + Math.abs(parseFloat(change || 0)).toFixed(2)}</td>
+                        </tr>`;
+                    }
+
+                    payment += `
+                        <tr>
+                            <td colspan="3">Payment Method</td>
+                            <td style="text-align:right;">${type}</td>
+                        </tr>`;
+
+                    if (paymentInfo != "") {
+                        payment += `<tr>
+                            <td colspan="3">Payment Reference</td>
+                            <td style="text-align:right;">${paymentInfo}</td>
+                        </tr>`;
+                    }
+                }
+
+                receipt = `<div style="font-size:10px;width:72mm;max-width:72mm;margin:0 auto;line-height:1.3;word-break:break-word;">                            
+            <p style="text-align: center;">
+            ${settings.img == "" ? settings.img : '<img style="max-width: 50px;max-width: 100px;" src ="' + img_path + settings.img + '" /><br>'}
+                <span style="font-size: 22px;">${settings.store}</span> <br>
+                <span style="font-size:16px; font-weight:bold;">INVOICE</span><br>
+                ${settings.address_one} <br>
+                ${settings.address_two} <br>
+                ${settings.contact != '' ? 'Tel: ' + settings.contact + '<br>' : ''} 
+                ${(settings.tax && String(settings.tax).trim() != '') ? 'VAT REG TIN: ' + settings.tax + '<br>' : 'VAT REG TIN: ____________________<br>'}
+            </p>
+            <hr>
+            <left>
+                <p>
+                Invoice No : ${orderNumber} <br>
+                Date : ${date}<br>
+                Ref No : ${refNumber == "" ? orderNumber : refNumber} <br>
+                Sold To : ${customerName} <br>
+                Buyer TIN : ${customerTin}<br>
+                Buyer Address : ${customerAddress}<br>
+                Cashier : ${user.fullname} <br>
+                </p>
+
+            </left>
+            <hr>
+            <table width="100%">
+                <thead style="text-align: left;">
+                <tr>
+                    <th>Item</th>
+                    <th>Qty</th>
+                    <th style="text-align:right;">Unit Price</th>
+                    <th style="text-align:right;">Amount</th>
+                </tr>
+                </thead>
+                <tbody>
+                ${items}                
+         
+                <tr>                        
+                    <td colspan="3"><b>${getVatPricingMode() === 'inclusive' ? 'Total Sales (VAT Inclusive)' : 'Total Sales (VAT Exclusive)'}</b></td>
+                    <td style="text-align:right;"><b>${settings.symbol}${subTotal.toFixed(2)}</b></td>
+                </tr>
+                <tr>
+                    <td colspan="3">Less: Discount</td>
+                    <td style="text-align:right;">${discount > 0 ? settings.symbol + parseFloat(discount).toFixed(2) : settings.symbol + '0.00'}</td>
+                </tr>
+                
+                ${tax_rows}
+                ${classification_rows}
+            
+                <tr>
+                    <td colspan="3"><h5>Total Amount Due (VAT Inclusive)</h5></td>
+                    <td style="text-align:right;"><h5>${settings.symbol}${parseFloat(orderTotal).toFixed(2)}</h5></td>
+                </tr>
+                ${payment == 0 ? '' : payment}
+                </tbody>
+                </table>
+                <br>
+                <hr>
+                <br>
+                <p style="font-size: 9px;">
+                 ${buildBirReceiptDetails()}
+                 </p>
+                <br>
+                <p style="text-align: center;">
+                 ${settings.footer}
+                 </p>
+                </div>`;
+
+                if (status == 3) {
+                    if (cart.length > 0) {
+                        printJS({ printable: receipt, type: 'raw-html' });
+                    }
+                    $(".loading").hide();
+                    return;
+                }
+
+                let data = {
+                    order: orderNumber,
+                    ref_number: refNumber,
+                    discount: discount,
+                    customer: customer,
+                    status: status,
+                    subtotal: parseFloat(subTotal).toFixed(2),
+                    tax: totalVat,
+                    taxable_sales: vatBreakdown.taxable,
+                    exempt_sales: vatBreakdown.exempt,
+                    zero_rated_sales: vatBreakdown.zeroRated,
+                    vat_pricing_mode: getVatPricingMode(),
+                    order_type: 1,
+                    items: cart,
+                    date: currentTime,
+                    payment_type: paymentType,
+                    payment_method: type,
+                    payment_info: paymentInfo,
+                    total: orderTotal,
+                    paid: paid,
+                    change: change,
+                    _id: transactionId,
+                    till: platform.till,
+                    mac: platform.mac,
+                    user: user.fullname,
+                    user_id: user._id
+                };
+
+                $.ajax({
+                    url: api + 'new',
+                    type: method,
+                    data: JSON.stringify(data),
+                    contentType: 'application/json; charset=utf-8',
+                    cache: false,
+                    processData: false,
+                    success: function () {
+                        cart = [];
+                        $('#viewTransaction').html('');
+                        $('#viewTransaction').html(receipt);
+                        toggleTransactionActionButtons(null);
+                        $('#orderModal').modal('show');
+                        loadProducts();
+                        loadCustomers();
+                        $(".loading").hide();
+                        $("#dueModal").modal('hide');
+                        $("#paymentModel").modal('hide');
+                        $(this).getHoldOrders();
+                        $(this).getCustomerOrders();
+                        $(this).renderTable(cart);
+                    }, error: function () {
+                        $(".loading").hide();
+                        $("#dueModal").modal('toggle');
+                        swal("Something went wrong!", 'Please refresh this page and try again');
+                    }
+                });
+
+                $("#refNumber").val('');
+                $("#change").text('0.00');
+                $("#payment").val('');
+                $("#payment_info").val('');
+                setPaymentMethod(1);
+            }
 
             $(".loading").show();
 
-
-            if (holdOrder != 0) {
-
-                orderNumber = holdOrder;
-                method = 'PUT'
-            }
-            else {
-                orderNumber = Math.floor(Date.now() / 1000);
-                method = 'POST'
-            }
-
-
-            receipt = `<div style="font-size: 10px;">                            
-        <p style="text-align: center;">
-        ${settings.img == "" ? settings.img : '<img style="max-width: 50px;max-width: 100px;" src ="' + img_path + settings.img + '" /><br>'}
-            <span style="font-size: 22px;">${settings.store}</span> <br>
-            <span style="font-size:16px; font-weight:bold;">INVOICE</span><br>
-            ${settings.address_one} <br>
-            ${settings.address_two} <br>
-            ${settings.contact != '' ? 'Tel: ' + settings.contact + '<br>' : ''} 
-            ${settings.tax != '' ? 'VAT REG TIN: ' + settings.tax + '<br>' : 'VAT REG TIN: ____________________<br>'}
-        </p>
-        <hr>
-        <left>
-            <p>
-            Invoice No : ${orderNumber} <br>
-            Date : ${date}<br>
-            Ref No : ${refNumber == "" ? orderNumber : refNumber} <br>
-            Sold To : ${customerName} <br>
-            Buyer TIN : ${customerTin}<br>
-            Buyer Address : ${customerAddress}<br>
-            Cashier : ${user.fullname} <br>
-            </p>
-
-        </left>
-        <hr>
-        <table width="100%">
-            <thead style="text-align: left;">
-            <tr>
-                <th>Item</th>
-                <th>Qty</th>
-                <th style="text-align:right;">Unit Price</th>
-                <th style="text-align:right;">Amount</th>
-            </tr>
-            </thead>
-            <tbody>
-            ${items}                
-     
-            <tr>                        
-                <td colspan="3"><b>${getVatPricingMode() === 'inclusive' ? 'Total Sales (VAT Inclusive)' : 'Total Sales (VAT Exclusive)'}</b></td>
-                <td style="text-align:right;"><b>${settings.symbol}${subTotal.toFixed(2)}</b></td>
-            </tr>
-            <tr>
-                <td colspan="3">Less: Discount</td>
-                <td style="text-align:right;">${discount > 0 ? settings.symbol + parseFloat(discount).toFixed(2) : settings.symbol + '0.00'}</td>
-            </tr>
-            
-            ${tax_rows}
-            ${classification_rows}
-        
-            <tr>
-                <td colspan="3"><h5>Total Amount Due (VAT Inclusive)</h5></td>
-                <td style="text-align:right;"><h5>${settings.symbol}${parseFloat(orderTotal).toFixed(2)}</h5></td>
-            </tr>
-            ${payment == 0 ? '' : payment}
-            </tbody>
-            </table>
-            <br>
-            <hr>
-            <br>
-            <p style="text-align: center;">
-             ${settings.footer}
-             </p>
-            </div>`;
-
-
-            if (status == 3) {
-                if (cart.length > 0) {
-
-                    printJS({ printable: receipt, type: 'raw-html' });
-
+            if (status == TRANSACTION_STATUS.PAID) {
+                $.get(api + 'serial/next?type=invoice', function (serialData) {
+                    if (!serialData || !serialData.serial) {
+                        $(".loading").hide();
+                        Swal.fire('Serial error', 'Unable to reserve invoice serial number.', 'error');
+                        return;
+                    }
+                    submitWithOrderNumber(serialData.serial);
+                }).fail(function () {
                     $(".loading").hide();
-                    return;
-
-                }
-                else {
-
-                    $(".loading").hide();
-                    return;
-                }
+                    Swal.fire('Serial error', 'Could not get next invoice serial number.', 'error');
+                });
+                return;
             }
 
-
-            let data = {
-                order: orderNumber,
-                ref_number: refNumber,
-                discount: discount,
-                customer: customer,
-                status: status,
-                subtotal: parseFloat(subTotal).toFixed(2),
-                tax: totalVat,
-                taxable_sales: vatBreakdown.taxable,
-                exempt_sales: vatBreakdown.exempt,
-                zero_rated_sales: vatBreakdown.zeroRated,
-                vat_pricing_mode: getVatPricingMode(),
-                order_type: 1,
-                items: cart,
-                date: currentTime,
-                payment_type: 0,
-                payment_info: "",
-                total: orderTotal,
-                paid: paid,
-                change: change,
-                _id: orderNumber,
-                till: platform.till,
-                mac: platform.mac,
-                user: user.fullname,
-                user_id: user._id
-            }
-
-
-            $.ajax({
-                url: api + 'new',
-                type: method,
-                data: JSON.stringify(data),
-                contentType: 'application/json; charset=utf-8',
-                cache: false,
-                processData: false,
-                success: function (data) {
-
-                    cart = [];
-                    $('#viewTransaction').html('');
-                    $('#viewTransaction').html(receipt);
-                    $('#orderModal').modal('show');
-                    loadProducts();
-                    loadCustomers();
-                    $(".loading").hide();
-                    $("#dueModal").modal('hide');
-                    $("#paymentModel").modal('hide');
-                    $(this).getHoldOrders();
-                    $(this).getCustomerOrders();
-                    $(this).renderTable(cart);
-
-                }, error: function (data) {
-                    $(".loading").hide();
-                    $("#dueModal").modal('toggle');
-                    swal("Something went wrong!", 'Please refresh this page and try again');
-
-                }
-            });
-
-            $("#refNumber").val('');
-            $("#change").text('');
-            $("#payment").val('');
-
+            submitWithOrderNumber(transactionId);
         }
 
 
@@ -1164,6 +1387,8 @@ if (auth == undefined) {
 
             let data = {
                 orderId: deleteId,
+                user: user.fullname,
+                user_id: user._id
             }
 
             Swal.fire({
@@ -1226,7 +1451,8 @@ if (auth == undefined) {
                 name: $('#userName').val(),
                 phone: $('#phoneNumber').val(),
                 email: $('#emailAddress').val(),
-                address: $('#userAddress').val()
+                address: $('#userAddress').val(),
+                tin: $('#customerTin').val()
             }
 
             $.ajax({
@@ -1240,11 +1466,18 @@ if (auth == undefined) {
                     $("#newCustomer").modal('hide');
                     Swal.fire("Customer added!", "Customer added successfully!", "success");
                     $("#customer option:selected").removeAttr('selected');
+                    let customerValue = JSON.stringify({
+                        id: custData._id,
+                        name: custData.name,
+                        tin: custData.tin || '',
+                        address: custData.address || ''
+                    });
+
                     $('#customer').append(
-                        $('<option>', { text: custData.name, value: `{"id": ${custData._id}, "name": ${custData.name}}`, selected: 'selected' })
+                        $('<option>', { text: custData.name, value: customerValue, selected: 'selected' })
                     );
 
-                    $('#customer').val(`{"id": ${custData._id}, "name": ${custData.name}}`).trigger('chosen:updated');
+                    $('#customer').val(customerValue).trigger('chosen:updated');
 
                 }, error: function (data) {
                     $("#newCustomer").modal('hide');
@@ -1262,16 +1495,38 @@ if (auth == undefined) {
 
 
         $("#confirmPayment").on('click', function () {
-            if ($('#payment').val() == "") {
+            let paymentValue = parseFloat($('#payment').val());
+            let payableValue = parseFloat($('#payablePrice').val());
+            let paymentReference = ($("#payment_info").val() || '').trim();
+
+            if ($('#payment').val() == "" || isNaN(paymentValue)) {
                 Swal.fire(
                     'Nope!',
                     'Please enter the amount that was paid!',
                     'warning'
                 );
+                return;
             }
-            else {
-                $(this).submitDueOrder(1);
+
+            if (!isNaN(payableValue) && paymentValue < payableValue) {
+                Swal.fire(
+                    'Insufficient payment',
+                    'The paid amount is less than the amount due.',
+                    'warning'
+                );
+                return;
             }
+
+            if (!isCashPayment(paymentType) && paymentReference == "") {
+                Swal.fire(
+                    'Reference required',
+                    'Please provide the non-cash payment reference number.',
+                    'warning'
+                );
+                return;
+            }
+
+            $(this).submitDueOrder(1);
         });
 
 
@@ -1284,6 +1539,24 @@ if (auth == undefined) {
             $('#transactions_view').show();
             $(this).hide();
 
+        });
+
+
+        $('#downloadComplianceReport').click(function () {
+            let query = `compliance/report?start=${encodeURIComponent(start_date)}&end=${encodeURIComponent(end_date)}&user=${by_user}&till=${by_till}`;
+
+            $(".loading").show();
+
+            $.get(api + query, function (reportData) {
+                let reportCsv = buildComplianceCsv(reportData);
+                let fileName = 'BIR_Compliance_Report_' + moment().format('YYYYMMDD_HHmmss') + '.csv';
+                downloadCsvFile(fileName, reportCsv);
+                $(".loading").hide();
+                Swal.fire('Report ready', 'Compliance report downloaded as CSV.', 'success');
+            }).fail(function () {
+                $(".loading").hide();
+                Swal.fire('Export failed', 'Could not generate compliance report.', 'error');
+            });
         });
 
 
@@ -2023,9 +2296,20 @@ if (auth == undefined) {
                 $("#address_two").val(settings.address_two);
                 $("#contact").val(settings.contact);
                 $("#tax").val(settings.tax);
+                $("#min").val(settings.min || '');
+                $("#pos_serial_no").val(settings.pos_serial_no || '');
                 $("#symbol").val(settings.symbol);
                 $("#percentage").val(settings.percentage);
                 $("#vat_pricing_mode").val(settings.vat_pricing_mode || 'inclusive');
+                $("#bir_permit_no").val(settings.bir_permit_no || '');
+                $("#atp_ocn_no").val(settings.atp_ocn_no || '');
+                $("#atp_date_issued").val(settings.atp_date_issued || '');
+                $("#approved_serial_no").val(settings.approved_serial_no || '');
+                $("#supplier_name").val(settings.supplier_name || '');
+                $("#supplier_tin").val(settings.supplier_tin || '');
+                $("#supplier_address").val(settings.supplier_address || '');
+                $("#supplier_accreditation_no").val(settings.supplier_accreditation_no || '');
+                $("#supplier_accreditation_date").val(settings.supplier_accreditation_date || '');
                 $("#footer").val(settings.footer);
                 $("#logo_img").val(settings.img);
                 $('#charge_tax').prop("checked", false);
@@ -2134,113 +2418,125 @@ function loadTransactions() {
 
 
     $.get(api + query, function (transactions) {
-
-        if (transactions.length > 0) {
-
-
-            $('#transaction_list').empty();
+        if ($.fn.DataTable.isDataTable('#transactionList')) {
             $('#transactionList').DataTable().destroy();
+        }
 
-            allTransactions = [...transactions];
+        $('#transaction_list').empty();
+        allTransactions = [...(transactions || [])];
 
-            transactions.forEach((trans, index) => {
+        if (!transactions || transactions.length === 0) {
+            $('#total_sales #counter').text(settings.symbol + '0.00');
+            $('#total_transactions #counter').text(0);
+            sold = [];
+            loadSoldProducts();
+            return;
+        }
 
-                sales += parseFloat(trans.total);
-                transact++;
+        transactions.forEach((trans, index) => {
+            let status = normalizeTransactionStatus(trans.status);
+            let transTotal = parseFloat(trans.total || 0);
 
+            if (status === TRANSACTION_STATUS.PAID) {
+                sales += transTotal;
+            } else if (status === TRANSACTION_STATUS.REFUNDED) {
+                sales -= transTotal;
+            }
+            transact++;
 
-
-                trans.items.forEach(item => {
+            if (status === TRANSACTION_STATUS.PAID) {
+                (trans.items || []).forEach(item => {
                     sold_items.push(item);
                 });
+            }
 
+            if (!tills.includes(trans.till)) {
+                tills.push(trans.till);
+            }
 
-                if (!tills.includes(trans.till)) {
-                    tills.push(trans.till);
+            if (!users.includes(trans.user_id)) {
+                users.push(trans.user_id);
+            }
+
+            counter++;
+            let paymentMethodLabel = trans.paid == "" ? "" : getPaymentMethodLabel(trans.payment_type, trans.payment_method);
+            let statusBadge = getTransactionStatusBadge(status);
+            let actionBtn = '<button onClick="$(this).viewTransaction(' + index + ')" class="btn btn-info"><i class="fa fa-search-plus"></i></button>';
+            let paidAmount = parseFloat(trans.paid);
+            let paidText = (trans.paid === "" || trans.paid === undefined || trans.paid === null || isNaN(paidAmount)) ? '' : settings.symbol + paidAmount.toFixed(2);
+            let changeAmount = parseFloat(trans.change);
+            let changeText = (trans.change === "" || trans.change === undefined || trans.change === null || isNaN(changeAmount)) ? '' : settings.symbol + Math.abs(changeAmount).toFixed(2);
+
+            transaction_list += `<tr>
+                            <td>${trans.order || trans._id}</td>
+                            <td class="nobr">${moment(trans.date).format('YYYY MMM DD hh:mm:ss')}</td>
+                            <td>${settings.symbol + parseFloat(trans.total || 0).toFixed(2)}</td>
+                            <td>${paidText}</td>
+                            <td>${changeText}</td>
+                            <td>${paymentMethodLabel}</td>
+                            <td>${trans.till}</td>
+                            <td>${trans.user}</td>
+                            <td>${statusBadge}</td>
+                            <td>${actionBtn}</td></tr>
+                `;
+
+            if (counter == transactions.length) {
+
+                $('#total_sales #counter').text(settings.symbol + parseFloat(sales).toFixed(2));
+                $('#total_transactions #counter').text(transact);
+
+                const result = {};
+
+                for (const { product_name, price, quantity, id } of sold_items) {
+                    if (!result[product_name]) result[product_name] = [];
+                    result[product_name].push({ id, price, quantity });
                 }
 
-                if (!users.includes(trans.user_id)) {
-                    users.push(trans.user_id);
-                }
+                for (item in result) {
+                    let price = 0;
+                    let quantity = 0;
+                    let id = 0;
 
-                counter++;
-                transaction_list += `<tr>
-                                <td>${trans.order}</td>
-                                <td class="nobr">${moment(trans.date).format('YYYY MMM DD hh:mm:ss')}</td>
-                                <td>${settings.symbol + trans.total}</td>
-                                <td>${trans.paid == "" ? "" : settings.symbol + trans.paid}</td>
-                                <td>${trans.change ? settings.symbol + Math.abs(trans.change).toFixed(2) : ''}</td>
-                                <td>${trans.paid == "" ? "" : "Cash"}</td>
-                                <td>${trans.till}</td>
-                                <td>${trans.user}</td>
-                                <td>${trans.paid == "" ? '<button class="btn btn-dark"><i class="fa fa-search-plus"></i></button>' : '<button onClick="$(this).viewTransaction(' + index + ')" class="btn btn-info"><i class="fa fa-search-plus"></i></button></td>'}</tr>
-                    `;
+                    result[item].forEach(i => {
+                        id = i.id;
+                        price = i.price;
+                        quantity += i.quantity;
+                    });
 
-                if (counter == transactions.length) {
-
-                    $('#total_sales #counter').text(settings.symbol + parseFloat(sales).toFixed(2));
-                    $('#total_transactions #counter').text(transact);
-
-                    const result = {};
-
-                    for (const { product_name, price, quantity, id } of sold_items) {
-                        if (!result[product_name]) result[product_name] = [];
-                        result[product_name].push({ id, price, quantity });
-                    }
-
-                    for (item in result) {
-
-                        let price = 0;
-                        let quantity = 0;
-                        let id = 0;
-
-                        result[item].forEach(i => {
-                            id = i.id;
-                            price = i.price;
-                            quantity += i.quantity;
-                        });
-
-                        sold.push({
-                            id: id,
-                            product: item,
-                            qty: quantity,
-                            price: price
-                        });
-                    }
-
-                    loadSoldProducts();
-
-
-                    if (by_user == 0 && by_till == 0) {
-
-                        userFilter(users);
-                        tillFilter(tills);
-                    }
-
-
-                    $('#transaction_list').html(transaction_list);
-                    $('#transactionList').DataTable({
-                        "order": [[1, "desc"]]
-                        , "autoWidth": false
-                        , "info": true
-                        , "JQueryUI": true
-                        , "ordering": true
-                        , "paging": true,
-                        "dom": 'Bfrtip',
-                        "buttons": ['csv', 'excel', 'pdf',]
-
+                    sold.push({
+                        id: id,
+                        product: item,
+                        qty: quantity,
+                        price: price
                     });
                 }
-            });
-        }
-        else {
-            Swal.fire(
-                'No data!',
-                'No transactions available within the selected criteria',
-                'warning'
-            );
-        }
 
+                loadSoldProducts();
+
+                if (by_user == 0 && by_till == 0) {
+                    userFilter(users);
+                    tillFilter(tills);
+                }
+
+                $('#transaction_list').html(transaction_list);
+                $('#transactionList').DataTable({
+                    "order": [[1, "desc"]]
+                    , "autoWidth": false
+                    , "info": true
+                    , "JQueryUI": true
+                    , "ordering": true
+                    , "paging": true,
+                    "dom": 'Bfrtip',
+                    "buttons": ['csv', 'excel', 'pdf',]
+                });
+            }
+        });
+    }).fail(function () {
+        Swal.fire(
+            'Load failed',
+            'Could not load transactions. Please try again.',
+            'error'
+        );
     });
 }
 
@@ -2266,21 +2562,37 @@ function loadSoldProducts() {
     let products = 0;
     $('#product_sales').empty();
 
+    if (!sold || sold.length === 0) {
+        $('#total_items #counter').text(0);
+        $('#total_products #counter').text(0);
+        return;
+    }
+
     sold.forEach((item, index) => {
 
         items += item.qty;
         products++;
 
-        let product = allProducts.filter(function (selected) {
+        let matchedProducts = allProducts.filter(function (selected) {
             return selected._id == item.id;
         });
+        let matchedProduct = matchedProducts.length > 0 ? matchedProducts[0] : null;
+        let availableStock = '';
+
+        if (!matchedProduct) {
+            availableStock = '';
+        } else if (matchedProduct.stock == 1) {
+            availableStock = matchedProduct.quantity;
+        } else {
+            availableStock = 'N/A';
+        }
 
         counter++;
 
         sold_list += `<tr>
             <td>${item.product}</td>
             <td>${item.qty}</td>
-            <td>${product[0].stock == 1 ? product.length > 0 ? product[0].quantity : '' : 'N/A'}</td>
+            <td>${availableStock}</td>
             <td>${settings.symbol + (item.qty * parseFloat(item.price)).toFixed(2)}</td>
             </tr>`;
 
@@ -2319,19 +2631,115 @@ function tillFilter(tills) {
 
 }
 
+function toggleTransactionActionButtons(transaction) {
+    let canAdjust = transaction && normalizeTransactionStatus(transaction.status) === TRANSACTION_STATUS.PAID;
+    $('#voidTransactionBtn').toggle(!!canAdjust);
+    $('#refundTransactionBtn').toggle(!!canAdjust);
+}
+
+function submitTransactionAdjustment(actionType) {
+    if (transaction_index === undefined || transaction_index === null) {
+        Swal.fire('No transaction selected', 'Please select a transaction first.', 'warning');
+        return;
+    }
+
+    let selected = allTransactions[transaction_index];
+    if (!selected) {
+        Swal.fire('Not found', 'Selected transaction is no longer available.', 'warning');
+        return;
+    }
+
+    if (normalizeTransactionStatus(selected.status) !== TRANSACTION_STATUS.PAID) {
+        Swal.fire('Not allowed', 'Only paid transactions can be voided or refunded.', 'warning');
+        return;
+    }
+
+    let actionLabel = actionType === 'void' ? 'Void' : 'Refund';
+    let endpoint = actionType === 'void' ? 'void' : 'refund';
+
+    Swal.fire({
+        title: `${actionLabel} Transaction`,
+        text: `Enter reason for ${actionLabel.toLowerCase()}.`,
+        input: 'textarea',
+        inputPlaceholder: 'Type reason here...',
+        inputValidator: (value) => {
+            if (!value || value.trim() === '') {
+                return 'Reason is required.';
+            }
+        },
+        showCancelButton: true,
+        confirmButtonText: actionLabel,
+        confirmButtonColor: actionType === 'void' ? '#f0ad4e' : '#d9534f'
+    }).then((result) => {
+        if (!result.value) return;
+
+        let payload = {
+            transactionId: selected._id,
+            reason: result.value.trim(),
+            user: user.fullname,
+            user_id: user._id,
+            till: platform && platform.till ? platform.till : '',
+            mac: platform && platform.mac ? platform.mac : ''
+        };
+
+        $(".loading").show();
+
+        $.ajax({
+            url: api + endpoint,
+            type: 'POST',
+            data: JSON.stringify(payload),
+            contentType: 'application/json; charset=utf-8',
+            cache: false,
+            processData: false,
+            success: function () {
+                $(".loading").hide();
+                $('#orderModal').modal('hide');
+                loadTransactions();
+                Swal.fire(
+                    actionType === 'void' ? 'Transaction Voided' : 'Transaction Refunded',
+                    actionType === 'void' ? 'Inventory was restored and audit log updated.' : 'Inventory was restored and refund reference created.',
+                    'success'
+                );
+            },
+            error: function (xhr) {
+                $(".loading").hide();
+                let message = 'Operation failed. Please try again.';
+                if (xhr && xhr.responseJSON && xhr.responseJSON.message) {
+                    message = xhr.responseJSON.message;
+                }
+                Swal.fire('Action failed', message, 'error');
+            }
+        });
+    });
+}
+
+$('body').on('click', '#voidTransactionBtn', function () {
+    submitTransactionAdjustment('void');
+});
+
+$('body').on('click', '#refundTransactionBtn', function () {
+    submitTransactionAdjustment('refund');
+});
+
+$('#orderModal').on('hidden.bs.modal', function () {
+    toggleTransactionActionButtons(null);
+});
+
 
 $.fn.viewTransaction = function (index) {
 
     transaction_index = index;
 
     let discount = allTransactions[index].discount;
-    let refNumber = allTransactions[index].ref_number != "" ? allTransactions[index].ref_number : allTransactions[index].order;
-    let orderNumber = allTransactions[index].order;
+    let refNumber = allTransactions[index].ref_number != "" ? allTransactions[index].ref_number : (allTransactions[index].order || allTransactions[index]._id);
+    let orderNumber = allTransactions[index].order || allTransactions[index]._id;
     let type = "";
     let payment = 0;
+    let paymentInfo = allTransactions[index].payment_info || '';
     let tax_rows = "";
     let items = "";
-    let products = allTransactions[index].items;
+    let products = allTransactions[index].items || [];
+    let transactionStatusLabel = getTransactionStatusLabel(allTransactions[index].status);
     let customerName = allTransactions[index].customer == 0 ? 'Walk in customer' : allTransactions[index].customer.name;
     let customerTin = allTransactions[index].customer && allTransactions[index].customer.tin ? allTransactions[index].customer.tin : '';
     let customerAddress = allTransactions[index].customer && allTransactions[index].customer.address ? allTransactions[index].customer.address : '';
@@ -2348,31 +2756,42 @@ $.fn.viewTransaction = function (index) {
         items += "<tr><td>" + item.product_name + " <small>(" + formatTaxTypeLabel(getProductTaxType(item)) + ")</small></td><td style=\"text-align:center;\">" + item.quantity + "</td><td style=\"text-align:right;\">" + settings.symbol + unitPrice.toFixed(2) + "</td><td style=\"text-align:right;\">" + settings.symbol + lineAmount.toFixed(2) + "</td></tr>";
 
     });
-
-
-    type = "Cash";
+    type = getPaymentMethodLabel(allTransactions[index].payment_type, allTransactions[index].payment_method);
+    let transactionIsCash = isCashPayment(allTransactions[index].payment_type) || type.toLowerCase() == 'cash';
 
 
     if (allTransactions[index].paid != "") {
         payment = `<tr>
-                    <td colspan="3">Amount Tendered</td>
+                    <td colspan="3">${transactionIsCash ? 'Amount Tendered' : 'Amount Paid'}</td>
                     <td style="text-align:right;">${settings.symbol + allTransactions[index].paid}</td>
-                </tr>
-                <tr>
+                </tr>`;
+
+        if (transactionIsCash) {
+            payment += `<tr>
                     <td colspan="3">Change</td>
                     <td style="text-align:right;">${settings.symbol + Math.abs(allTransactions[index].change).toFixed(2)}</td>
-                </tr>
+                </tr>`;
+        }
+
+        payment += `
                 <tr>
                     <td colspan="3">Payment Method</td>
                     <td style="text-align:right;">${type}</td>
-                </tr>`
+                </tr>`;
+
+        if (paymentInfo != "") {
+            payment += `<tr>
+                    <td colspan="3">Payment Reference</td>
+                    <td style="text-align:right;">${paymentInfo}</td>
+                </tr>`;
+        }
     }
 
     tax_rows = buildTaxRowsForReceipt(breakdown, allTransactions[index].tax, allTransactions[index].vat_pricing_mode || getVatPricingMode());
 
 
 
-    receipt = `<div style="font-size: 10px;">                            
+    receipt = `<div style="font-size:10px;width:72mm;max-width:72mm;margin:0 auto;line-height:1.3;word-break:break-word;">                            
         <p style="text-align: center;">
         ${settings.img == "" ? settings.img : '<img style="max-width: 50px;max-width: 100px;" src ="' + img_path + settings.img + '" /><br>'}
             <span style="font-size: 22px;">${settings.store}</span> <br>
@@ -2380,7 +2799,7 @@ $.fn.viewTransaction = function (index) {
             ${settings.address_one} <br>
             ${settings.address_two} <br>
             ${settings.contact != '' ? 'Tel: ' + settings.contact + '<br>' : ''} 
-            ${settings.tax != '' ? 'VAT REG TIN: ' + settings.tax + '<br>' : 'VAT REG TIN: ____________________<br>'}
+            ${(settings.tax && String(settings.tax).trim() != '') ? 'VAT REG TIN: ' + settings.tax + '<br>' : 'VAT REG TIN: ____________________<br>'}
     </p>
     <hr>
     <left>
@@ -2388,6 +2807,10 @@ $.fn.viewTransaction = function (index) {
         Invoice No : ${orderNumber} <br>
         Date : ${moment(allTransactions[index].date).format('DD MMM YYYY HH:mm:ss')}<br>
         Ref No : ${refNumber} <br>
+        Status : ${transactionStatusLabel}<br>
+        ${allTransactions[index].void_reason ? 'Void Reason : ' + allTransactions[index].void_reason + '<br>' : ''}
+        ${allTransactions[index].refund_reference ? 'Refund Ref : ' + allTransactions[index].refund_reference + '<br>' : ''}
+        ${allTransactions[index].refund_reason ? 'Refund Reason : ' + allTransactions[index].refund_reason + '<br>' : ''}
         Sold To : ${customerName} <br>
         Buyer TIN : ${customerTin}<br>
         Buyer Address : ${customerAddress}<br>
@@ -2430,6 +2853,10 @@ $.fn.viewTransaction = function (index) {
         <br>
         <hr>
         <br>
+        <p style="font-size: 9px;">
+         ${buildBirReceiptDetails()}
+         </p>
+        <br>
         <p style="text-align: center;">
          ${settings.footer}
          </p>
@@ -2437,6 +2864,7 @@ $.fn.viewTransaction = function (index) {
 
     $('#viewTransaction').html('');
     $('#viewTransaction').html(receipt);
+    toggleTransactionActionButtons(allTransactions[index]);
 
     $('#orderModal').modal('show');
 

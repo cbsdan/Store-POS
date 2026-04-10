@@ -233,6 +233,28 @@ margin-right: 30px;
     border-radius: 6px;
 }
 
+/* Keep long receipts scrollable inside the receipt modal */
+#orderModal .modal-dialog {
+  width: 380px;
+  max-width: 96vw;
+}
+
+#orderModal .modal-content {
+  max-height: 90vh;
+  display: flex;
+  flex-direction: column;
+}
+
+#orderModal .modal-body {
+  overflow-y: auto;
+  overflow-x: hidden;
+  max-height: calc(90vh - 130px);
+}
+
+#viewTransaction {
+  word-break: break-word;
+}
+
 .widget-panel {
     padding-top: 8px;
 }

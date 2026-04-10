@@ -104,6 +104,11 @@
                 <div class="card-box"> 
                     <div class="row">               
                         <h3 class="col-md-2">Transactions</h3> 
+                        <div class="col-md-2">
+                            <button id="downloadComplianceReport" type="button" class="btn btn-primary m-t-20 btn-sm">
+                                <i class="fa fa-download"></i> Compliance Report
+                            </button>
+                        </div>
                         <div class="col-md-1">
                             <span>Till</span>
                             <select id="tills" class="form-control">                              
@@ -118,7 +123,10 @@
                             <span>Status</span>
                             <select id="status" class="form-control status">
                                 <option value="1">Paid</option>
-                                <option value="0">Unpaid</option>
+                                <option value="-1">All</option>
+                                <option value="0">Unpaid / Hold</option>
+                                <option value="2">Voided</option>
+                                <option value="3">Refunded</option>
                             </select>
                         </div>
                         <div class="col-md-3">
@@ -191,7 +199,8 @@
                                         <th>Method</th>
                                         <th>Till</th>
                                         <th>Cashier</th>
-                                        <th>View</th>
+                                        <th>Status</th>
+                                        <th>Action</th>
                                     </tr>
                                 </thead>
                                 <tbody id="transaction_list"></tbody>
@@ -391,9 +400,21 @@
               <div class="modal-body">
                   <div class="row">
                       <div class="col-md-4">
-                          <div class="list-group">
-                              <a href="javascript:void(0)" id="cash" onclick="paymentType = 1" class="list-group-item active">
+                          <div class="list-group" id="paymentMethods">
+                              <a href="javascript:void(0)" class="list-group-item active" data-payment-type="1">
                                   Cash
+                              </a>
+                              <a href="javascript:void(0)" class="list-group-item" data-payment-type="2">
+                                  GCash
+                              </a>
+                              <a href="javascript:void(0)" class="list-group-item" data-payment-type="3">
+                                  Maya
+                              </a>
+                              <a href="javascript:void(0)" class="list-group-item" data-payment-type="4">
+                                  Card (Debit/Credit)
+                              </a>
+                              <a href="javascript:void(0)" class="list-group-item" data-payment-type="5">
+                                  Bank Transfer
                               </a>
                           </div>
                       </div>
@@ -406,6 +427,11 @@
                           <div class="input-group">
                               <span class="input-group-addon" id="basic-addon3">Payment  <span id="payment_curr"></span> </span>
                               <input type="text" placeholder="0.0" class="form-control" id="payment" aria-describedby="basic-addon3">
+                          </div>
+                          <br>
+                          <div class="input-group" id="payment_info_group" style="display:none;">
+                              <span class="input-group-addon" id="payment_info_label">Reference No.</span>
+                              <input type="text" placeholder="Enter payment reference number" class="form-control" id="payment_info">
                           </div>
                           <hr>
                           <div class="row">
@@ -508,6 +534,10 @@
                       <div class="form-group">
                           <label for="userName">Customer Email</label>
                           <input type="email" name="email" parsley-trigger="change" placeholder="Enter email address" class="form-control" id="emailAddress">
+                      </div>
+                      <div class="form-group">
+                          <label for="customerTin">Customer TIN</label>
+                          <input type="text" name="tin" parsley-trigger="change" placeholder="Enter TIN (optional)" class="form-control" id="customerTin">
                       </div>
                       <div class="form-group">
                           <label for="userName">Customer Address</label>
@@ -795,7 +825,10 @@
     <div class="modal-dialog modal-sm">
         <div class="modal-content">
             <div class="modal-header">
-                <button class="btn btn-sm btn-default" onclick="$(this).print()">Print</button> <br> <button type="button" class="close" data-dismiss="modal" aria-hidden="true">×</button>
+                <button class="btn btn-sm btn-default" onclick="$(this).print()">Print</button>
+                <button class="btn btn-sm btn-warning" id="voidTransactionBtn" style="display:none;">Void</button>
+                <button class="btn btn-sm btn-danger" id="refundTransactionBtn" style="display:none;">Refund</button>
+                <button type="button" class="close" data-dismiss="modal" aria-hidden="true">×</button>
               </div>
             <div class="modal-body" id="viewTransaction">                 
             </div>
@@ -884,6 +917,14 @@
                                         <label for="userName">Vat Number</label>
                                         <input type="text" name="tax" parsley-trigger="change" class="form-control" id="tax">
                                  </div>
+                                 <div class="form-group">
+                                        <label for="min">Machine Identification Number (MIN)</label>
+                                        <input type="text" name="min" class="form-control" id="min">
+                                 </div>
+                                 <div class="form-group">
+                                        <label for="pos_serial_no">POS/CRM Serial Number</label>
+                                        <input type="text" name="pos_serial_no" class="form-control" id="pos_serial_no">
+                                 </div>
                               
 
                             </div>
@@ -910,6 +951,42 @@
                                      <br><br>
                                      <div class="form-group">
                                         <label><input type="checkbox" name="charge_tax" id="charge_tax"> Charge Vat</label>
+                                     </div>
+                                     <div class="form-group">
+                                        <label for="bir_permit_no">BIR Permit No.</label>
+                                        <input type="text" name="bir_permit_no" class="form-control" id="bir_permit_no">
+                                     </div>
+                                     <div class="form-group">
+                                        <label for="atp_ocn_no">ATP/OCN No.</label>
+                                        <input type="text" name="atp_ocn_no" class="form-control" id="atp_ocn_no">
+                                     </div>
+                                     <div class="form-group">
+                                        <label for="atp_date_issued">ATP/OCN Date Issued</label>
+                                        <input type="text" name="atp_date_issued" class="form-control" id="atp_date_issued" placeholder="MM-DD-YYYY">
+                                     </div>
+                                     <div class="form-group">
+                                        <label for="approved_serial_no">Approved Inclusive Serial Nos.</label>
+                                        <input type="text" name="approved_serial_no" class="form-control" id="approved_serial_no" placeholder="e.g. 5000001 - 5000500">
+                                     </div>
+                                     <div class="form-group">
+                                        <label for="supplier_name">POS/CRM Supplier Name</label>
+                                        <input type="text" name="supplier_name" class="form-control" id="supplier_name">
+                                     </div>
+                                     <div class="form-group">
+                                        <label for="supplier_tin">POS/CRM Supplier TIN</label>
+                                        <input type="text" name="supplier_tin" class="form-control" id="supplier_tin">
+                                     </div>
+                                     <div class="form-group">
+                                        <label for="supplier_address">POS/CRM Supplier Address</label>
+                                        <input type="text" name="supplier_address" class="form-control" id="supplier_address">
+                                     </div>
+                                     <div class="form-group">
+                                        <label for="supplier_accreditation_no">Supplier Accreditation No.</label>
+                                        <input type="text" name="supplier_accreditation_no" class="form-control" id="supplier_accreditation_no">
+                                     </div>
+                                     <div class="form-group">
+                                        <label for="supplier_accreditation_date">Supplier Accreditation Date Issued</label>
+                                        <input type="text" name="supplier_accreditation_date" class="form-control" id="supplier_accreditation_date" placeholder="MM-DD-YYYY">
                                      </div>
                                      <div class="form-group">       
                                         <label for="userName"><span id="rmv_logo" class="btn btn-xs btn-warning">Remove</span> Logo </label>              
